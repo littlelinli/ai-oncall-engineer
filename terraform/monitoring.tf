@@ -1,13 +1,5 @@
 # Мониторинг демо-приложения: лог-группа, метрика ошибок, алармы и правило EventBridge.
 
-# Лог-группа уже создана руками, поэтому импортируем её, а не создаём заново.
-# После первого apply этот блок нужно удалить: иначе demo-up после demo-down
-# упадёт, потому что импортировать будет нечего.
-import {
-  to = aws_cloudwatch_log_group.app
-  id = "/demoapp/app"
-}
-
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/demoapp/app"
   retention_in_days = 7
