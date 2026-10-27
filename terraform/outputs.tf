@@ -43,6 +43,15 @@ output "incidents_table_name" {
   value       = aws_dynamodb_table.incidents.name
 }
 
+output "alarm_names" {
+  description = "Alarms that send incidents to the Lambda"
+  value = concat(
+    [aws_cloudwatch_metric_alarm.app_errors.alarm_name],
+    aws_cloudwatch_metric_alarm.cpu_high[*].alarm_name,
+    aws_cloudwatch_metric_alarm.disk_high[*].alarm_name,
+  )
+}
+
 output "incidents_table_arn" {
   description = "DynamoDB table ARN (for Lambda IAM policies)"
   value       = aws_dynamodb_table.incidents.arn

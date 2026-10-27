@@ -34,6 +34,24 @@ variable "app_port" {
   default     = 8080
 }
 
+variable "incident_lambda_arn" {
+  description = "ARN of the Lambda that analyzes an incident and sends it to Telegram"
+  type        = string
+  default     = "arn:aws:lambda:eu-north-1:788383723111:function:incident-analyzer"
+}
+
+variable "alarm_prefix" {
+  description = "Alarm name prefix; the EventBridge rule only catches these alarms"
+  type        = string
+  default     = "ai-oncall-engineer-"
+}
+
+variable "root_disk_device" {
+  description = "Root disk name in the CWAgent metric (nvme0n1p1 for t3/t4g)"
+  type        = string
+  default     = "nvme0n1p1"
+}
+
 variable "app_allowed_cidr" {
   description = "Who can open the demo app in a browser"
   type        = string
