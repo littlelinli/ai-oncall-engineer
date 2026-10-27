@@ -15,22 +15,37 @@ dnf install -y python3-pip amazon-cloudwatch-agent
 mkdir -p "$APP_DIR" "$LOG_DIR"
 
 cat > "$APP_DIR/app.py" <<'EOF'
+import hmac
 import json
 import multiprocessing
 import os
 import shutil
 import time
 from datetime import datetime, timezone
+from functools import wraps
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 LOG_PATH="/var/log/demoapp/app.log"
 FILL_PATH="/var/tmp/demoapp-fill.bin"
 CPU_SECONDS=300
 DISK_TARGET=0.92
+DEMO_TOKEN=os.environ.get("DEMO_TOKEN", "")
 app=Flask(__name__)
 state={"errors_until":0}
 cpu_procs=[]
+
+
+def require_token(view):
+    # Ручки поломок работают только с токеном: заголовок X-Demo-Token или ?token=
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        given=request.headers.get("X-Demo-Token") or request.args.get("token") or ""
+        if not DEMO_TOKEN or not hmac.compare_digest(given, DEMO_TOKEN):
+            log("WARN", "rejected request without valid token", path=request.path)
+            return jsonify(error="forbidden"), 403
+        return view(*args, **kwargs)
+    return wrapper
 
 
 def log(level, msg, **extra):
@@ -57,6 +72,7 @@ def search():
 
 
 @app.route("/break/500", methods=["POST"])
+@require_token
 def break_500():
     state["errors_until"]=time.time()+120
     log("WARN", "break started", kind="500", seconds=120)
@@ -82,6 +98,7 @@ def disk_percent():
 
 
 @app.route("/break/cpu", methods=["POST"])
+@require_token
 def break_cpu():
     stop_cpu()
     cores=os.cpu_count() or 1
@@ -94,6 +111,7 @@ def break_cpu():
 
 
 @app.route("/break/disk", methods=["POST"])
+@require_token
 def break_disk():
     if os.path.exists(FILL_PATH):
         os.remove(FILL_PATH)
@@ -107,6 +125,7 @@ def break_disk():
 
 
 @app.route("/fix", methods=["POST"])
+@require_token
 def fix():
     state["errors_until"]=0
     stop_cpu()
@@ -123,13 +142,20 @@ python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
 chown -R ec2-user:ec2-user "$APP_DIR" "$LOG_DIR"
 
-# 4. systemd-сервис
+# 4. Токен для ручек поломок (создаётся один раз, при повторном запуске сохраняется)
+if [ ! -s /etc/demoapp.env ]; then
+  echo "DEMO_TOKEN=$(openssl rand -hex 16)" > /etc/demoapp.env
+fi
+chmod 600 /etc/demoapp.env
+
+# 5. systemd-сервис
 cat > /etc/systemd/system/demoapp.service <<'EOF'
 [Unit]
 Description=Incident demo app
 After=network.target
 
 [Service]
+EnvironmentFile=/etc/demoapp.env
 User=ec2-user
 WorkingDirectory=/opt/demoapp
 ExecStart=/opt/demoapp/venv/bin/python -m flask --app app run --host 0.0.0.0 --port 8080
@@ -144,7 +170,7 @@ systemctl daemon-reload
 systemctl enable demoapp
 systemctl restart demoapp
 
-# 5. CloudWatch Agent
+# 6. CloudWatch Agent
 cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<EOF
 {
   "agent": { "metrics_collection_interval": 60, "run_as_user": "root" },
@@ -176,8 +202,9 @@ EOF
   -a fetch-config -m ec2 -s \
   -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
 
-# 6. Проверка
+# 7. Проверка
 sleep 3
 curl -sf localhost:8080/health && echo " <- app ok"
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status
+echo "DEMO TOKEN: $(cut -d= -f2 /etc/demoapp.env)"
 echo "setup.sh done"
