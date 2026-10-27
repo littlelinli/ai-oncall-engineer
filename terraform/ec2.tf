@@ -20,14 +20,14 @@ resource "aws_instance" "app" {
     volume_size = 8
   }
 
-  user_data = <<-EOF
-    #!/bin/bash
-    dnf install -y amazon-cloudwatch-agent git
-  EOF
+  # Installs the demo app (systemd, port 8080) and CloudWatch Agent.
+  # Install log on the instance: /var/log/cloud-init-output.log
+  user_data                   = file("${path.module}/../scripts/setup.sh")
+  user_data_replace_on_change = true
 
   # A new AMI release must not recreate the instance with the app on it
   lifecycle {
-    ignore_changes = [ami, user_data]
+    ignore_changes = [ami]
   }
 
   tags = { Name = "incident-demo-app" }
