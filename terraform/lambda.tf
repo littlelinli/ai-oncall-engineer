@@ -1,9 +1,9 @@
 # Lambda incident-analyzer: alarm -> logs and metrics -> Gemini -> DynamoDB, Telegram, SNS email.
-# Code: src/lambda/incident_analyzer/lambda_function.py
+# Code: src/lambda/incident_processor/lambda_function.py
 
 data "archive_file" "incident_analyzer" {
   type        = "zip"
-  source_dir  = "${path.module}/../src/lambda/incident_analyzer"
+  source_dir  = "${path.module}/../src/lambda/incident_processor"
   output_path = "${path.module}/build/incident_analyzer.zip"
 }
 
