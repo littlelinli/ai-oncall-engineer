@@ -7,4 +7,10 @@ resource "aws_dynamodb_table" "incidents" {
     name = "incident_id"
     type = "S"
   }
+
+  # The Lambda sets ttl = now + 7 days, DynamoDB deletes the item after that
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
 }

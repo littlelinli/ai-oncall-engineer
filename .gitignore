@@ -15,3 +15,6 @@ __pycache__/
 .vscode/
 .idea/
 tfplan
+
+# Lambda zip built by Terraform
+terraform/build/

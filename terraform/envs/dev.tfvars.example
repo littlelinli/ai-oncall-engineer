@@ -2,3 +2,9 @@ aws_region   = "eu-north-1"
 project_name = "ai-oncall-engineer"
 environment  = "dev"
 enable_ec2   = true
+
+# Secrets: put real values only in envs/dev.tfvars (ignored by git)
+gemini_api_key     = "your-gemini-key"
+telegram_bot_token = "123456:ABC..."
+telegram_chat_id   = "-100123456789"
+alert_emails       = ["you@example.com"]

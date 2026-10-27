@@ -99,13 +99,13 @@ resource "aws_cloudwatch_event_rule" "alarm_to_lambda" {
 
 resource "aws_cloudwatch_event_target" "incident_lambda" {
   rule = aws_cloudwatch_event_rule.alarm_to_lambda.name
-  arn  = var.incident_lambda_arn
+  arn  = aws_lambda_function.incident_analyzer.arn
 }
 
 resource "aws_lambda_permission" "allow_eventbridge" {
   statement_id  = "AllowEventBridgeAlarmRule"
   action        = "lambda:InvokeFunction"
-  function_name = var.incident_lambda_arn
+  function_name = aws_lambda_function.incident_analyzer.arn
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.alarm_to_lambda.arn
 }

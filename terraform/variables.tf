@@ -34,10 +34,28 @@ variable "app_port" {
   default     = 8080
 }
 
-variable "incident_lambda_arn" {
-  description = "ARN of the Lambda that analyzes an incident and sends it to Telegram"
+# Secrets: set them in envs/dev.tfvars (not in git) or as TF_VAR_* env variables
+variable "gemini_api_key" {
+  description = "Gemini API key for the incident Lambda"
   type        = string
-  default     = "arn:aws:lambda:eu-north-1:788383723111:function:incident-analyzer"
+  sensitive   = true
+}
+
+variable "telegram_bot_token" {
+  description = "Telegram bot token for incident messages"
+  type        = string
+  sensitive   = true
+}
+
+variable "telegram_chat_id" {
+  description = "Telegram chat that receives incident messages"
+  type        = string
+}
+
+variable "alert_emails" {
+  description = "Emails subscribed to incident alerts (SNS)"
+  type        = list(string)
+  default     = []
 }
 
 variable "alarm_prefix" {
