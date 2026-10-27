@@ -25,7 +25,7 @@ EC2, VPC and Security Groups, CloudWatch, EventBridge, Lambda, DynamoDB, S3, SNS
 ## Repository structure
 
 ```
-terraform/   infrastructure as code (main.tf, variables.tf, outputs.tf, envs/)
+terraform/   infrastructure as code (bootstrap/ for the state bucket, envs/)
 src/         Lambda code and the demo app
 scripts/     demo-up.sh and demo-down.sh
 docs/        architecture and setup guide
@@ -34,10 +34,10 @@ docs/        architecture and setup guide
 ## Status
 
 - [x] Idea and architecture design
-- [ ] Network and EC2 (Terraform)
+- [x] Network and EC2 (Terraform)
 - [ ] CloudWatch alarms and EventBridge
 - [ ] Lambda + Gemini integration
-- [ ] DynamoDB, S3 and SNS
+- [ ] DynamoDB (table created), S3 and SNS
 - [ ] Dashboard
 - [ ] Cost analysis and final documentation
 

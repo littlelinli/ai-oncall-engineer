@@ -1,4 +1,4 @@
-aws_region   = "us-east-1"
+aws_region   = "eu-north-1"
 project_name = "ai-oncall-engineer"
 environment  = "dev"
 enable_ec2   = true
