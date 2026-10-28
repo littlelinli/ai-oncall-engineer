@@ -133,6 +133,13 @@ data "aws_iam_policy_document" "ingest" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
     resources = ["${aws_cloudwatch_log_group.servers.arn}:*"]
   }
+
+  # Alarms for a server are created on its first /ingest; the prefix routes them to incident-analyzer
+  statement {
+    sid       = "ServerAlarms"
+    actions   = ["cloudwatch:PutMetricAlarm"]
+    resources = ["arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${var.alarm_prefix}*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ingest" {
@@ -161,6 +168,7 @@ resource "aws_lambda_function" "ingest" {
       TABLE_NAME        = aws_dynamodb_table.servers.name
       METRICS_NAMESPACE = var.servers_metrics_namespace
       SERVERS_LOG_GROUP = aws_cloudwatch_log_group.servers.name
+      ALARM_PREFIX      = var.alarm_prefix
     }
   }
 

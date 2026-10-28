@@ -7,11 +7,11 @@ Gemini API and Telegram are not included (not AWS).
 
 ## Summary
 
-Cost = **platform ≈ $13.8** (fixed) + **≈ $2.0 per connected client server**.
+Cost = **platform ≈ $13.8** (fixed) + **≈ $2.1 per connected client server**.
 
 | Connected servers | 0 | 1 | 10 | 50 | 100 |
 |---|---|---|---|---|---|
-| Per month | $13.8 | $15.8 | $33.8 | $113.8 | $213.8 |
+| Per month | $13.8 | $15.9 | $34.8 | $118.8 | $223.8 |
 
 The platform cost is almost entirely the demo server. API, Lambda, tables and S3 cost cents
 at our load: they are billed per request, not per hour.
@@ -37,19 +37,19 @@ The agent sends 1 request per minute = 43,800 requests per month.
 |---|---|---|
 | Metrics cpu, mem, disk, error_count in CloudWatch | 4 × $0.30 | $1.20 |
 | PutMetricData requests (1 call for all 4 metrics) | 43,800 × $0.01 / 1000 | $0.44 |
-| Alarms per server (if we create 3) | 3 × $0.10 | $0.30 |
+| Alarms per server: cpu, disk, errors, down | 4 × $0.10 | $0.40 |
 | API Gateway HTTP API | 43,800 × $1.06 / million | $0.05 |
 | DynamoDB: key lookup + online status | 43,800 × ($0.13 + $0.67) / million | $0.04 |
 | Lambda /ingest (128 MB, ~100 ms) | free up to ~22 servers, then | $0.02 |
 | /ingest logs and server errors | ~30 MB × $0.54 / GB | $0.02 |
-| **Total** | | **≈ $2.0** |
+| **Total** | | **≈ $2.1** |
 
 Incident analysis (incident-analyzer) runs only when an alarm fires and costs a fraction of a cent;
 the main cost per incident is the Gemini request.
 
 ## How to lower the per-server cost
 
-Over 90% of the per-server cost is CloudWatch: metrics ($1.20), PutMetricData requests ($0.44) and alarms ($0.30).
+Over 90% of the per-server cost is CloudWatch: metrics ($1.20), PutMetricData requests ($0.44) and alarms ($0.40).
 
 - Send all 4 metrics in **one** PutMetricData call: 4 separate calls would cost
   $1.75 instead of $0.44.

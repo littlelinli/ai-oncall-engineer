@@ -32,7 +32,21 @@ data "aws_iam_policy_document" "incident_analyzer" {
   statement {
     sid       = "ReadAppLogs"
     actions   = ["logs:FilterLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.app.arn}:*"]
+    resources = ["${aws_cloudwatch_log_group.app.arn}:*", "${aws_cloudwatch_log_group.servers.arn}:*"]
+  }
+
+  # Auto-fix: run the fixed /fix command on the demo server only
+  statement {
+    sid       = "AutoFixDemoServer"
+    actions   = ["ssm:SendCommand"]
+    resources = concat(aws_instance.app[*].arn, ["arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"])
+  }
+
+  # GetCommandInvocation does not support resource-level permissions
+  statement {
+    sid       = "AutoFixResult"
+    actions   = ["ssm:GetCommandInvocation"]
+    resources = ["*"]
   }
 
   # GetMetricStatistics and ListMetrics do not support resource-level permissions
@@ -97,6 +111,9 @@ resource "aws_lambda_function" "incident_analyzer" {
       GEMINI_API_KEY     = var.gemini_api_key
       TELEGRAM_BOT_TOKEN = var.telegram_bot_token
       TELEGRAM_CHAT_ID   = var.telegram_chat_id
+      SERVERS_LOG_GROUP  = aws_cloudwatch_log_group.servers.name
+      METRICS_NAMESPACE  = var.servers_metrics_namespace
+      ALARM_PREFIX       = var.alarm_prefix
     }
   }
 

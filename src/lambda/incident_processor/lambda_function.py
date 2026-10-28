@@ -14,6 +14,10 @@ from botocore.exceptions import ClientError
  
 LOG_GROUP = "/demoapp/app"
 SERVICE = "demoapp"
+# Подключённые серверы клиентов (агент Kezekshi -> /ingest)
+SERVERS_LOG_GROUP = os.environ.get("SERVERS_LOG_GROUP", "/kezekshi/servers")
+SERVERS_NAMESPACE = os.environ.get("METRICS_NAMESPACE", "Kezekshi")
+ALARM_PREFIX = os.environ.get("ALARM_PREFIX", "ai-oncall-engineer-")
 GEMINI_MODELS = [
     "gemini-flash-lite-latest",
     "gemini-3.5-flash-lite",
@@ -31,13 +35,16 @@ dynamodb = boto3.resource("dynamodb")
  
 # ---------- Логи ----------
  
-def get_logs(alarm_time, minutes=10, max_lines=50):
-    """Берёт строки логов за N минут до тревоги."""
+def get_logs(alarm_time, minutes=10, max_lines=50, server_id=None):
+    """Берёт строки логов за N минут до тревоги: демо-приложения или сервера клиента."""
     end = datetime.fromisoformat(alarm_time.replace("Z", "+00:00"))
     start = end - timedelta(minutes=minutes)
+    where = {"logGroupName": LOG_GROUP}
+    if server_id:
+        where = {"logGroupName": SERVERS_LOG_GROUP, "logStreamNames": [server_id]}
     try:
         resp = logs_client.filter_log_events(
-            logGroupName=LOG_GROUP,
+            **where,
             startTime=int(start.timestamp() * 1000),
             endTime=int(end.timestamp() * 1000),
             limit=200,
@@ -90,6 +97,25 @@ def metric_value(namespace, name, dimensions, end, minutes=20, stat="Average", p
         return None
  
  
+def get_server_stats(alarm_time, server_id):
+    """То же для сервера клиента: метрики агента в namespace Kezekshi."""
+    end = datetime.fromisoformat(alarm_time.replace("Z", "+00:00"))
+    dims = [{"Name": "ServerId", "Value": server_id}]
+    errors = metric_value(SERVERS_NAMESPACE, "error_count", dims, end, minutes=10, stat="Sum", pick="max")
+    return {
+        "errors_per_min": errors if errors is not None else 0,
+        "cpu": metric_value(SERVERS_NAMESPACE, "cpu", dims, end),
+        "disk": metric_value(SERVERS_NAMESPACE, "disk", dims, end),
+    }
+
+
+def server_name(alarm_name, server_id):
+    """ai-oncall-engineer-<name>-<server_id>-<вид> -> <name>"""
+    middle = alarm_name[len(ALARM_PREFIX):] if alarm_name.startswith(ALARM_PREFIX) else alarm_name
+    marker = f"-{server_id}-"
+    return middle.split(marker)[0] if marker in middle else server_id
+
+
 def get_stats(alarm_time, instance_id):
     """errors_per_min, cpu, disk. Чего нет, там None (ошибки: 0)."""
     end = datetime.fromisoformat(alarm_time.replace("Z", "+00:00"))
@@ -149,6 +175,7 @@ def ask_gemini(incident):
         return None, None, "не задана переменная GEMINI_API_KEY"
  
     context = {
+        "server": incident["server"],
         "alarm": incident["alarm_name"],
         "metric": incident["metric"],
         "value": incident["value"],
@@ -158,12 +185,24 @@ def ask_gemini(incident):
         "log_summary": incident["log_summary"],
         "last_log_lines": incident["logs_sample"][-5:],
     }
+    if incident.get("server_id"):
+        environment = (
+            f"Контекст: Linux-сервер клиента «{incident['server']}». Какие сервисы на нём "
+            "работают, неизвестно: данные приходят от агента мониторинга (CPU, память, диск, "
+            "строки ERROR из логов приложений). Тревога -down значит, что агент 3 минуты "
+            "не присылал данные: сервер выключен, нет сети или остановлен сервис kezekshi-agent. "
+            "Имена сервисов не выдумывай, бери их только из логов. "
+        )
+    else:
+        environment = (
+            f"Контекст: приложение DemoApp (Python, systemd-сервис {SERVICE}) "
+            "на одном EC2-сервере. "
+            f"Имя сервиса СТРОГО {SERVICE}, без дефиса: systemctl status {SERVICE}, "
+            f"journalctl -u {SERVICE}, systemctl restart {SERVICE}. "
+        )
     prompt = (
         "Ты дежурный DevOps-инженер. Сработала тревога на сервере.\n"
-        f"Контекст: приложение DemoApp (Python, systemd-сервис {SERVICE}) "
-        "на одном EC2-сервере. "
-        f"Имя сервиса СТРОГО {SERVICE}, без дефиса: systemctl status {SERVICE}, "
-        f"journalctl -u {SERVICE}, systemctl restart {SERVICE}. "
+        + environment +
         "Относись к инциденту как к реальному и не "
         "упоминай, что это демо или симуляция, даже если такие слова есть в логах: "
         "вместо этого пиши «в логах зафиксирован сбой». "
@@ -367,6 +406,7 @@ def send_telegram(inc):
     icons = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}
     text = (
         f"{icons.get(inc['severity'], '⚪')} {inc['title']}\n"
+        f"Сервер: {inc['server']}\n"
         f"Важность: {inc['severity']}\n"
         f"{stats_line(inc['stats'])}\n"
         f"Причина: {inc['root_cause']}\n"
@@ -388,6 +428,7 @@ def send_sns(inc):
         return
     message = (
         f"[{inc['severity'].upper()}] {inc['title']}\n\n"
+        f"Сервер: {inc['server']}\n"
         f"{stats_line(inc['stats'])}\n\n"
         f"Причина: {inc['root_cause']}\n\n"
         f"{fix_line(inc)}\n\n"
@@ -414,11 +455,20 @@ def lambda_handler(event, context):
     reason_data = json.loads(detail["state"]["reasonData"])
     metric = detail["configuration"]["metrics"][0]["metricStat"]["metric"]
  
-    raw_logs = get_logs(event["time"])
+    dims = metric.get("dimensions") or {}
+    # Тревога сервера клиента (агент Kezekshi) или демо-сервера (CloudWatch Agent)
+    server_id = dims.get("ServerId")
+    raw_logs = get_logs(event["time"], server_id=server_id)
     # Если в тревоге несколько точек, берём пиковую, а не самую раннюю
     value = max(reason_data.get("recentDatapoints") or [0])
-    instance_id = (metric.get("dimensions") or {}).get("InstanceId") \
-        or os.environ.get("INSTANCE_ID", "unknown")
+    if server_id:
+        instance_id = ""  # автопочинка на серверах клиентов пока не поддерживается
+        server = server_name(detail["alarmName"], server_id)
+        stats = get_server_stats(event["time"], server_id)
+    else:
+        instance_id = dims.get("InstanceId") or os.environ.get("INSTANCE_ID", "unknown")
+        server = SERVICE
+        stats = get_stats(event["time"], instance_id)
  
     # id зависит от тревоги и момента её перехода в ALARM. Повторная доставка того же
     # события даёт тот же id (дубль отсекается), а новая тревога получает новый id,
@@ -434,11 +484,13 @@ def lambda_handler(event, context):
         "timestamp": event["time"],
         "region": event["region"],
         "instance_id": instance_id,
+        "server_id": server_id or "",
+        "server": server,
         "metric": f'{metric["namespace"]}/{metric["name"]}',
         "value": value,
         "threshold": reason_data["threshold"],
         "reason": detail["state"]["reason"],
-        "stats": get_stats(event["time"], instance_id),
+        "stats": stats,
         "logs_sample": raw_logs[-10:],
         "log_summary": summarize_logs(raw_logs),
     }
