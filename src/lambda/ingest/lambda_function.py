@@ -94,9 +94,14 @@ def put_errors(server_id, errors):
     )
 
 
-def create_alarms(server_id, name):
-    """4 аларма на сервер. PutMetricAlarm перезаписывает аларм с тем же именем,
-    поэтому повторный вызов безопасен."""
+DOWN_ALARM_DELAY = 300  # секунд после первого контакта до создания server-down
+
+
+def create_alarms(server_id, name, down_only=False):
+    """Алармы сервера. PutMetricAlarm перезаписывает аларм с тем же именем,
+    поэтому повторный вызов безопасен.
+    server-down создаётся отдельно и позже: если создать его сразу, у нового сервера
+    ещё нет данных за прошлые минуты, и аларм ложно уходит в ALARM."""
     dims = [{"Name": "ServerId", "Value": server_id}]
     base = f"{ALARM_PREFIX}srv-{server_id}"
     alarms = [
@@ -111,6 +116,8 @@ def create_alarms(server_id, name):
          f"No data from agent for 3 minutes on {name}"),
     ]
     for suffix, metric, stat, threshold, op, periods, missing, description in alarms:
+        if (suffix == "server-down") != down_only:
+            continue
         CW.put_metric_alarm(
             AlarmName=f"{base}-{suffix}",
             AlarmDescription=description,
@@ -167,17 +174,25 @@ def lambda_handler(event, context):
         put_errors(server_id, errors)
     except Exception as exc:
         problems.append(f"logs: {exc}")
-    # Алармы после первых метрик: иначе server-down может сразу увидеть «нет данных»
-    if not server.get("alarms_created"):
-        try:
+    # Алармы после метрик этой минуты: аларм сразу видит свежую точку
+    now = int(time.time())
+    try:
+        if not server.get("alarms_created"):
             create_alarms(server_id, server["name"])
             TABLE.update_item(
                 Key={"key_hash": key_hash},
-                UpdateExpression="SET alarms_created = :t",
+                UpdateExpression="SET alarms_created = :t, first_seen = if_not_exists(first_seen, :now)",
+                ExpressionAttributeValues={":t": True, ":now": now},
+            )
+        elif not server.get("down_alarm_created") and now - int(server.get("first_seen", 0)) >= DOWN_ALARM_DELAY:
+            create_alarms(server_id, server["name"], down_only=True)
+            TABLE.update_item(
+                Key={"key_hash": key_hash},
+                UpdateExpression="SET down_alarm_created = :t",
                 ExpressionAttributeValues={":t": True},
             )
-        except Exception as exc:  # попробуем ещё раз со следующей минутой
-            problems.append(f"alarms: {exc}")
+    except Exception as exc:  # попробуем ещё раз со следующей минутой
+        problems.append(f"alarms: {exc}")
 
     print(json.dumps({
         "server_id": server_id, "name": server["name"],
