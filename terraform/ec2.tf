@@ -33,6 +33,14 @@ resource "aws_instance" "app" {
   tags = { Name = "incident-demo-app" }
 }
 
+# demo-down / demo-up only stop and start the server (app_running); enable_ec2 = false deletes it
+resource "aws_ec2_instance_state" "app" {
+  count = var.enable_ec2 ? 1 : 0
+
+  instance_id = aws_instance.app[0].id
+  state       = var.app_running ? "running" : "stopped"
+}
+
 # The instance was created before enable_ec2 existed
 moved {
   from = aws_instance.app

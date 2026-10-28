@@ -87,3 +87,9 @@ variable "servers_metrics_namespace" {
   type        = string
   default     = "Kezekshi"
 }
+
+variable "app_running" {
+  description = "Demo server state: true = running, false = stopped (keeps disk, agent and IP; see scripts/demo-down)"
+  type        = bool
+  default     = true
+}
