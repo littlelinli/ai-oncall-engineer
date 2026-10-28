@@ -2,13 +2,20 @@
 
 Заголовок X-Kezekshi-Key: ключ из /register.
 Тело: {"server", "time", "cpu", "mem", "disk", "errors": [...], "error_count"}
-Ответ 200: {"ok": true, "server_id": "..."}; 401: неизвестный ключ; 400: не JSON.
+Ответ 200: {"ok": true, "server_id": "..."};  401: неизвестный ключ;  400: не JSON.
 
-Что делает: проверяет ключ, ставит status=online, пишет cpu/mem/disk/error_count
-в CloudWatch (namespace Kezekshi, измерение ServerId), строки errors пишет
-в лог-группу /kezekshi/servers (стрим = server_id).
-При первом контакте создаёт алармы сервера ai-oncall-engineer-<name>-<server_id>-*:
-так алармы появляются только у серверов, где агент реально установлен.
+Что делает:
+1. Проверяет ключ и отмечает, что сервер на связи (status = online, last_seen).
+2. Пишет метрики cpu, mem, disk, error_count и heartbeat в CloudWatch
+   (namespace METRICS_NAMESPACE, измерение ServerId). На них висят алармы из /register.
+3. Пишет строки errors в лог-группу SERVERS_LOG_GROUP, поток = server_id.
+   Оттуда incident-analyzer берёт контекст для разбора.
+4. При первом контакте сервера создаёт для него 4 аларма с префиксом ALARM_PREFIX
+   (CPU, диск, ошибки, «сервер пропал»). Их ловит общее правило EventBridge.
+   Алармы создаются здесь, а не в /register: так не остаётся алармов у серверов,
+   которые зарегистрировали, но так и не подключили.
+Если CloudWatch временно недоступен, агенту всё равно отвечаем 200: данные следующей
+минуты придут сами, а ретраи агента только создадут лишнюю нагрузку.
 """
 import base64
 import hashlib
@@ -18,28 +25,14 @@ import time
 from datetime import datetime, timezone
 
 import boto3
-from botocore.exceptions import ClientError
 
 TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
 CW = boto3.client("cloudwatch")
 LOGS = boto3.client("logs")
-
 NAMESPACE = os.environ.get("METRICS_NAMESPACE", "Kezekshi")
 LOG_GROUP = os.environ.get("SERVERS_LOG_GROUP", "/kezekshi/servers")
 ALARM_PREFIX = os.environ.get("ALARM_PREFIX", "ai-oncall-engineer-")
-CPU_THRESHOLD = float(os.environ.get("CPU_THRESHOLD", "85"))
-DISK_THRESHOLD = float(os.environ.get("DISK_THRESHOLD", "90"))
-
-MAX_ERROR_LINES = 100
-MAX_LINE_LEN = 8000
-_streams_ready = set()  # кэш между вызовами в тёплой Lambda
-
-METRICS = [  # (поле в теле, имя метрики, единица)
-    ("cpu", "cpu", "Percent"),
-    ("mem", "mem", "Percent"),
-    ("disk", "disk", "Percent"),
-    ("error_count", "error_count", "Count"),
-]
+MAX_ERRORS = 20
 
 
 def response(status, body):
@@ -60,95 +53,79 @@ def read_body(event):
     return data
 
 
+def number(value, low=0.0, high=None):
+    """Число из тела агента или None, если пришло что-то странное."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if value < low or (high is not None and value > high):
+        return None
+    return value
+
+
 def put_metrics(server_id, data):
     dims = [{"Name": "ServerId", "Value": server_id}]
-    items = []
-    for field, metric, unit in METRICS:
-        try:
-            value = float(data[field])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if value != value or value in (float("inf"), float("-inf")):
-            continue
-        items.append({
-            "MetricName": metric,
-            "Dimensions": dims,
-            "Value": value,
-            "Unit": unit,
-        })
-    if items:
-        CW.put_metric_data(Namespace=NAMESPACE, MetricData=items)
+    metrics = [{"MetricName": "Heartbeat", "Dimensions": dims, "Value": 1.0, "Unit": "Count"}]
+    for field, name, unit, high in (
+        ("cpu", "CpuPercent", "Percent", 100.0),
+        ("mem", "MemPercent", "Percent", 100.0),
+        ("disk", "DiskPercent", "Percent", 100.0),
+        ("error_count", "ErrorCount", "Count", None),
+    ):
+        value = number(data.get(field), high=high)
+        if value is not None:
+            metrics.append({"MetricName": name, "Dimensions": dims, "Value": value, "Unit": unit})
+    CW.put_metric_data(Namespace=NAMESPACE, MetricData=metrics)
+
+
+def put_errors(server_id, errors):
+    lines = [str(e)[:2000] for e in errors if str(e).strip()][-MAX_ERRORS:]
+    if not lines:
+        return
+    try:
+        LOGS.create_log_stream(logGroupName=LOG_GROUP, logStreamName=server_id)
+    except LOGS.exceptions.ResourceAlreadyExistsException:
+        pass
+    now_ms = int(time.time() * 1000)
+    LOGS.put_log_events(
+        logGroupName=LOG_GROUP,
+        logStreamName=server_id,
+        logEvents=[{"timestamp": now_ms, "message": line} for line in lines],
+    )
 
 
 def create_alarms(server_id, name):
+    """4 аларма на сервер. PutMetricAlarm перезаписывает аларм с тем же именем,
+    поэтому повторный вызов безопасен."""
     dims = [{"Name": "ServerId", "Value": server_id}]
-    base = f"{ALARM_PREFIX}{name}-{server_id}"
-    common = dict(Namespace=NAMESPACE, Dimensions=dims, Period=60)
-
+    base = f"{ALARM_PREFIX}srv-{server_id}"
     alarms = [
-        dict(
-            AlarmName=f"{base}-cpu",
-            AlarmDescription=f"Сервер {name} ({server_id}): высокая загрузка CPU",
-            MetricName="cpu", Statistic="Average",
-            ComparisonOperator="GreaterThanThreshold", Threshold=CPU_THRESHOLD,
-            EvaluationPeriods=3, DatapointsToAlarm=3,
-            TreatMissingData="notBreaching", **common,
-        ),
-        dict(
-            AlarmName=f"{base}-disk",
-            AlarmDescription=f"Сервер {name} ({server_id}): диск почти заполнен",
-            MetricName="disk", Statistic="Average",
-            ComparisonOperator="GreaterThanThreshold", Threshold=DISK_THRESHOLD,
-            EvaluationPeriods=2, DatapointsToAlarm=2,
-            TreatMissingData="notBreaching", **common,
-        ),
-        dict(
-            AlarmName=f"{base}-errors",
-            AlarmDescription=f"Сервер {name} ({server_id}): ошибки в логе приложения",
-            MetricName="error_count", Statistic="Sum",
-            ComparisonOperator="GreaterThanThreshold", Threshold=0,
-            EvaluationPeriods=1, DatapointsToAlarm=1,
-            TreatMissingData="notBreaching", **common,
-        ),
-        dict(
-            # агент шлёт данные раз в минуту; нет ни одной точки 3 минуты подряд = сервер пропал
-            AlarmName=f"{base}-down",
-            AlarmDescription=f"Сервер {name} ({server_id}): нет данных от агента 3 минуты",
-            MetricName="cpu", Statistic="SampleCount",
-            ComparisonOperator="LessThanThreshold", Threshold=1,
-            EvaluationPeriods=3, DatapointsToAlarm=3,
-            TreatMissingData="breaching", **common,
-        ),
+        # имя, метрика, статистика, порог, оператор, периодов, нет данных
+        ("cpu-high", "CpuPercent", "Average", 80, "GreaterThanThreshold", 2, "notBreaching",
+         f"CPU above 80% on {name}"),
+        ("disk-high", "DiskPercent", "Maximum", 85, "GreaterThanThreshold", 1, "notBreaching",
+         f"Disk above 85% on {name}"),
+        ("app-errors", "ErrorCount", "Sum", 5, "GreaterThanThreshold", 1, "notBreaching",
+         f"More than 5 errors per minute in logs on {name}"),
+        ("server-down", "Heartbeat", "SampleCount", 1, "LessThanThreshold", 3, "breaching",
+         f"No data from agent for 3 minutes on {name}"),
     ]
-    for alarm in alarms:
-        CW.put_metric_alarm(**alarm)
-
-
-def ensure_stream(stream):
-    if stream in _streams_ready:
-        return
-    try:
-        LOGS.create_log_stream(logGroupName=LOG_GROUP, logStreamName=stream)
-    except ClientError as e:
-        if e.response["Error"]["Code"] != "ResourceAlreadyExistsException":
-            raise
-    _streams_ready.add(stream)
-
-
-def put_errors(server_id, name, data):
-    errors = data.get("errors")
-    if not isinstance(errors, list) or not errors:
-        return
-    now_ms = int(time.time() * 1000)
-    events = []
-    for i, line in enumerate(errors[:MAX_ERROR_LINES]):
-        message = json.dumps(
-            {"server_id": server_id, "server": name, "error": str(line)[:MAX_LINE_LEN]},
-            ensure_ascii=False,
+    for suffix, metric, stat, threshold, op, periods, missing, description in alarms:
+        CW.put_metric_alarm(
+            AlarmName=f"{base}-{suffix}",
+            AlarmDescription=description,
+            Namespace=NAMESPACE,
+            MetricName=metric,
+            Dimensions=dims,
+            Statistic=stat,
+            Period=60,
+            EvaluationPeriods=periods,
+            DatapointsToAlarm=periods,
+            Threshold=threshold,
+            ComparisonOperator=op,
+            TreatMissingData=missing,
+            Tags=[{"Key": "ServerId", "Value": server_id}, {"Key": "ServerName", "Value": name}],
         )
-        events.append({"timestamp": now_ms + i, "message": message})
-    ensure_stream(server_id)
-    LOGS.put_log_events(logGroupName=LOG_GROUP, logStreamName=server_id, logEvents=events)
 
 
 def lambda_handler(event, context):
@@ -168,8 +145,6 @@ def lambda_handler(event, context):
         return response(400, {"error": "Тело запроса должно быть JSON-объектом"})
     data.pop("key", None)  # агент дублирует ключ в теле, в логи он попасть не должен
 
-    server_id = server["server_id"]
-
     # Первый контакт снимает ttl: зарегистрированный сервер больше не удаляется
     TABLE.update_item(
         Key={"key_hash": key_hash},
@@ -181,18 +156,18 @@ def lambda_handler(event, context):
         },
     )
 
-    # Ошибки CloudWatch не должны ронять приём данных от агента
+    server_id = server["server_id"]
+    errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+    problems = []
     try:
         put_metrics(server_id, data)
-    except Exception as e:
-        print(json.dumps({"server_id": server_id, "metrics_error": str(e)}, ensure_ascii=False))
+    except Exception as exc:
+        problems.append(f"metrics: {exc}")
     try:
-        put_errors(server_id, server["name"], data)
-    except Exception as e:
-        print(json.dumps({"server_id": server_id, "logs_error": str(e)}, ensure_ascii=False))
-
-    # Алармы создаются после первых метрик, иначе -down сразу уйдёт в ALARM.
-    # Если не получилось, флаг не ставится и попытка повторится через минуту.
+        put_errors(server_id, errors)
+    except Exception as exc:
+        problems.append(f"logs: {exc}")
+    # Алармы после первых метрик: иначе server-down может сразу увидеть «нет данных»
     if not server.get("alarms_created"):
         try:
             create_alarms(server_id, server["name"])
@@ -201,7 +176,12 @@ def lambda_handler(event, context):
                 UpdateExpression="SET alarms_created = :t",
                 ExpressionAttributeValues={":t": True},
             )
-        except Exception as e:
-            print(json.dumps({"server_id": server_id, "alarms_error": str(e)}, ensure_ascii=False))
+        except Exception as exc:  # попробуем ещё раз со следующей минутой
+            problems.append(f"alarms: {exc}")
 
+    print(json.dumps({
+        "server_id": server_id, "name": server["name"],
+        "cpu": data.get("cpu"), "mem": data.get("mem"), "disk": data.get("disk"),
+        "error_count": data.get("error_count"), "problems": problems,
+    }, ensure_ascii=False))
     return response(200, {"ok": True, "server_id": server_id})

@@ -17,7 +17,6 @@ SERVICE = "demoapp"
 # Подключённые серверы клиентов (агент Kezekshi -> /ingest)
 SERVERS_LOG_GROUP = os.environ.get("SERVERS_LOG_GROUP", "/kezekshi/servers")
 SERVERS_NAMESPACE = os.environ.get("METRICS_NAMESPACE", "Kezekshi")
-ALARM_PREFIX = os.environ.get("ALARM_PREFIX", "ai-oncall-engineer-")
 GEMINI_MODELS = [
     "gemini-flash-lite-latest",
     "gemini-3.5-flash-lite",
@@ -101,19 +100,19 @@ def get_server_stats(alarm_time, server_id):
     """То же для сервера клиента: метрики агента в namespace Kezekshi."""
     end = datetime.fromisoformat(alarm_time.replace("Z", "+00:00"))
     dims = [{"Name": "ServerId", "Value": server_id}]
-    errors = metric_value(SERVERS_NAMESPACE, "error_count", dims, end, minutes=10, stat="Sum", pick="max")
+    errors = metric_value(SERVERS_NAMESPACE, "ErrorCount", dims, end, minutes=10, stat="Sum", pick="max")
     return {
         "errors_per_min": errors if errors is not None else 0,
-        "cpu": metric_value(SERVERS_NAMESPACE, "cpu", dims, end),
-        "disk": metric_value(SERVERS_NAMESPACE, "disk", dims, end),
+        "cpu": metric_value(SERVERS_NAMESPACE, "CpuPercent", dims, end),
+        "disk": metric_value(SERVERS_NAMESPACE, "DiskPercent", dims, end),
     }
 
 
-def server_name(alarm_name, server_id):
-    """ai-oncall-engineer-<name>-<server_id>-<вид> -> <name>"""
-    middle = alarm_name[len(ALARM_PREFIX):] if alarm_name.startswith(ALARM_PREFIX) else alarm_name
-    marker = f"-{server_id}-"
-    return middle.split(marker)[0] if marker in middle else server_id
+def server_name(description, server_id):
+    """Описание аларма из /ingest заканчивается на «on <имя сервера>»."""
+    if description and " on " in description:
+        return description.rsplit(" on ", 1)[1]
+    return server_id
 
 
 def get_stats(alarm_time, instance_id):
@@ -189,7 +188,7 @@ def ask_gemini(incident):
         environment = (
             f"Контекст: Linux-сервер клиента «{incident['server']}». Какие сервисы на нём "
             "работают, неизвестно: данные приходят от агента мониторинга (CPU, память, диск, "
-            "строки ERROR из логов приложений). Тревога -down значит, что агент 3 минуты "
+            "строки ERROR из логов приложений). Тревога server-down значит, что агент 3 минуты "
             "не присылал данные: сервер выключен, нет сети или остановлен сервис kezekshi-agent. "
             "Имена сервисов не выдумывай, бери их только из логов. "
         )
@@ -463,7 +462,7 @@ def lambda_handler(event, context):
     value = max(reason_data.get("recentDatapoints") or [0])
     if server_id:
         instance_id = ""  # автопочинка на серверах клиентов пока не поддерживается
-        server = server_name(detail["alarmName"], server_id)
+        server = server_name(detail["configuration"].get("description"), server_id)
         stats = get_server_stats(event["time"], server_id)
     else:
         instance_id = dims.get("InstanceId") or os.environ.get("INSTANCE_ID", "unknown")

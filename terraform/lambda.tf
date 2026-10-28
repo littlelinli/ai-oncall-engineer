@@ -113,7 +113,6 @@ resource "aws_lambda_function" "incident_analyzer" {
       TELEGRAM_CHAT_ID   = var.telegram_chat_id
       SERVERS_LOG_GROUP  = aws_cloudwatch_log_group.servers.name
       METRICS_NAMESPACE  = var.servers_metrics_namespace
-      ALARM_PREFIX       = var.alarm_prefix
     }
   }
 

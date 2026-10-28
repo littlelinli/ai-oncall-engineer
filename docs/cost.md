@@ -7,11 +7,11 @@ Gemini API and Telegram are not included (not AWS).
 
 ## Summary
 
-Cost = **platform ≈ $13.8** (fixed) + **≈ $2.1 per connected client server**.
+Cost = **platform ≈ $13.8** (fixed) + **≈ $2.5 per connected client server**.
 
 | Connected servers | 0 | 1 | 10 | 50 | 100 |
 |---|---|---|---|---|---|
-| Per month | $13.8 | $15.9 | $34.8 | $118.8 | $223.8 |
+| Per month | $13.8 | $16.3 | $38.8 | $138.8 | $263.8 |
 
 The platform cost is almost entirely the demo server. API, Lambda, tables and S3 cost cents
 at our load: they are billed per request, not per hour.
@@ -35,24 +35,24 @@ The agent sends 1 request per minute = 43,800 requests per month.
 
 | Resource | Calculation | Per month |
 |---|---|---|
-| Metrics cpu, mem, disk, error_count in CloudWatch | 4 × $0.30 | $1.20 |
-| PutMetricData requests (1 call for all 4 metrics) | 43,800 × $0.01 / 1000 | $0.44 |
-| Alarms per server: cpu, disk, errors, down | 4 × $0.10 | $0.40 |
+| Metrics CpuPercent, MemPercent, DiskPercent, ErrorCount, Heartbeat | 5 × $0.30 | $1.50 |
+| PutMetricData requests (1 call for all 5 metrics) | 43,800 × $0.01 / 1000 | $0.44 |
+| Alarms per server: cpu-high, disk-high, app-errors, server-down | 4 × $0.10 | $0.40 |
 | API Gateway HTTP API | 43,800 × $1.06 / million | $0.05 |
 | DynamoDB: key lookup + online status | 43,800 × ($0.13 + $0.67) / million | $0.04 |
 | Lambda /ingest (128 MB, ~100 ms) | free up to ~22 servers, then | $0.02 |
 | /ingest logs and server errors | ~30 MB × $0.54 / GB | $0.02 |
-| **Total** | | **≈ $2.1** |
+| **Total** | | **≈ $2.5** |
 
 Incident analysis (incident-analyzer) runs only when an alarm fires and costs a fraction of a cent;
 the main cost per incident is the Gemini request.
 
 ## How to lower the per-server cost
 
-Over 90% of the per-server cost is CloudWatch: metrics ($1.20), PutMetricData requests ($0.44) and alarms ($0.40).
+Over 90% of the per-server cost is CloudWatch: metrics ($1.50), PutMetricData requests ($0.44) and alarms ($0.40).
 
-- Send all 4 metrics in **one** PutMetricData call: 4 separate calls would cost
-  $1.75 instead of $0.44.
+- Send all 5 metrics in **one** PutMetricData call (already done): 5 separate calls would cost
+  $2.19 instead of $0.44.
 - With many clients, thresholds (CPU > 80% etc.) can be checked directly in the /ingest Lambda,
   keeping the latest values in DynamoDB. A server then costs ≈ $0.15 per month, but we lose
   CloudWatch graphs and alarms and have to write the alerting logic ourselves. For the MVP we keep CloudWatch.

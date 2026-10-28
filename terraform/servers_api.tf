@@ -134,11 +134,12 @@ data "aws_iam_policy_document" "ingest" {
     resources = ["${aws_cloudwatch_log_group.servers.arn}:*"]
   }
 
-  # Alarms for a server are created on its first /ingest; the prefix routes them to incident-analyzer
+  # Alarms for a server are created on its first /ingest (with tags, hence TagResource).
+  # Only the srv- names: the demo server alarms stay out of reach. The prefix routes them to incident-analyzer
   statement {
     sid       = "ServerAlarms"
-    actions   = ["cloudwatch:PutMetricAlarm"]
-    resources = ["arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${var.alarm_prefix}*"]
+    actions   = ["cloudwatch:PutMetricAlarm", "cloudwatch:TagResource"]
+    resources = ["arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${var.alarm_prefix}srv-*"]
   }
 }
 
