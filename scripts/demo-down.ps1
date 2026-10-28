@@ -1,7 +1,7 @@
-﻿# Останавливает демо-сервер после показа: EC2 больше не тарифицируется.
-# Остаются диск, агент, IP, API, таблицы и ссылка на install.sh. Включить обратно: .\scripts\demo-up.ps1
-# Запуск:  .\scripts\demo-down.ps1               (Terraform спросит yes)
-#          .\scripts\demo-down.ps1 -auto-approve (без вопроса)
+﻿# Stops the demo server: EC2 is no longer billed.
+# Disk, agent, IP, API, tables and the install.sh link stay. Start it again: .\scripts\demo-up.ps1
+# Usage:  .\scripts\demo-down.ps1               (Terraform asks for yes)
+#         .\scripts\demo-down.ps1 -auto-approve (no prompt)
 $ErrorActionPreference = "Stop"
 Push-Location (Join-Path $PSScriptRoot "..\terraform")
 try {
@@ -13,7 +13,7 @@ try {
     terraform apply "-var-file=envs/dev.tfvars" "-var=app_running=false" @args
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-    Write-Host "Сервер остановлен. Важно: обычный terraform apply без -var=app_running=false снова его включит."
+    Write-Host "Server stopped. Note: a plain terraform apply without -var=app_running=false starts it again."
 } finally {
     Pop-Location
 }

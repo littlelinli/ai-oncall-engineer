@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Включает демо-сервер перед показом. IP не меняется (Elastic IP), агент и логи на месте.
-# Запуск: ./scripts/demo-up.sh  (лишние параметры уходят в terraform, например -auto-approve)
+# Starts the demo server. The IP does not change (Elastic IP); agent and logs are kept.
+# Usage: ./scripts/demo-up.sh  (extra arguments go to terraform, e.g. -auto-approve)
 set -euo pipefail
 cd "$(dirname "$0")/../terraform"
 [ -d .terraform ] || terraform init
@@ -8,13 +8,13 @@ cd "$(dirname "$0")/../terraform"
 terraform apply -var-file=envs/dev.tfvars -var=app_running=true "$@"
 
 url="$(terraform output -raw app_url)"
-echo "Жду, пока приложение ответит на $url/health ..."
+echo "Waiting for the app to answer on $url/health ..."
 for _ in $(seq 30); do
   if curl -fsS -m 5 -o /dev/null "$url/health"; then
-    echo "Готово: $url"
+    echo "Ready: $url"
     exit 0
   fi
   sleep 10
 done
-echo "Сервер запущен, но приложение не отвечает 5 минут. Проверьте: terraform output instance_id, затем aws ssm start-session --target <id>" >&2
+echo "The server is running but the app has not answered for 5 minutes. Check: terraform output instance_id, then aws ssm start-session --target <id>" >&2
 exit 1

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Останавливает демо-сервер после показа: EC2 больше не тарифицируется.
-# Остаются диск, агент, IP, API, таблицы и ссылка на install.sh. Включить обратно: ./scripts/demo-up.sh
-# Запуск: ./scripts/demo-down.sh  (лишние параметры уходят в terraform, например -auto-approve)
+# Stops the demo server: EC2 is no longer billed.
+# Disk, agent, IP, API, tables and the install.sh link stay. Start it again: ./scripts/demo-up.sh
+# Usage: ./scripts/demo-down.sh  (extra arguments go to terraform, e.g. -auto-approve)
 set -euo pipefail
 cd "$(dirname "$0")/../terraform"
 [ -d .terraform ] || terraform init
 
 terraform apply -var-file=envs/dev.tfvars -var=app_running=false "$@"
 
-echo "Сервер остановлен. Важно: обычный terraform apply без -var=app_running=false снова его включит."
+echo "Server stopped. Note: a plain terraform apply without -var=app_running=false starts it again."

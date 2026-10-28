@@ -1,6 +1,6 @@
-﻿# Включает демо-сервер перед показом. IP не меняется (Elastic IP), агент и логи на месте.
-# Запуск:  .\scripts\demo-up.ps1               (Terraform спросит yes)
-#          .\scripts\demo-up.ps1 -auto-approve (без вопроса)
+﻿# Starts the demo server. The IP does not change (Elastic IP); agent and logs are kept.
+# Usage:  .\scripts\demo-up.ps1               (Terraform asks for yes)
+#         .\scripts\demo-up.ps1 -auto-approve (no prompt)
 $ErrorActionPreference = "Stop"
 Push-Location (Join-Path $PSScriptRoot "..\terraform")
 try {
@@ -13,17 +13,17 @@ try {
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
     $url = terraform output -raw app_url
-    Write-Host "Жду, пока приложение ответит на $url/health ..."
+    Write-Host "Waiting for the app to answer on $url/health ..."
     for ($i = 0; $i -lt 30; $i++) {
         try {
             Invoke-WebRequest "$url/health" -UseBasicParsing -TimeoutSec 5 | Out-Null
-            Write-Host "Готово: $url"
+            Write-Host "Ready: $url"
             exit 0
         } catch {
             Start-Sleep -Seconds 10
         }
     }
-    Write-Host "Сервер запущен, но приложение не отвечает 5 минут. Проверьте: terraform output instance_id, затем aws ssm start-session --target <id>"
+    Write-Host "The server is running but the app has not answered for 5 minutes. Check: terraform output instance_id, then aws ssm start-session --target <id>"
     exit 1
 } finally {
     Pop-Location
