@@ -1,80 +1,80 @@
-# Расчёт стоимости
+# Cost Estimate
 
-Регион eu-north-1 (Стокгольм), цены AWS on-demand на 28.10.2026 (из AWS Pricing API).
-Месяц = 730 часов, всё работает 24/7. Аккаунт платный, 12-месячного Free Tier нет;
-бесплатные навсегда лимиты Lambda (1 млн запросов и 400 000 ГБ·с в месяц) действуют для любого аккаунта.
-Gemini API и Telegram в расчёт не входят (это не AWS).
+Region eu-north-1 (Stockholm), AWS on-demand prices as of 2026-10-28 (from the AWS Pricing API).
+Month = 730 hours, everything runs 24/7. Paid account with no 12-month Free Tier; the always-free
+Lambda limits (1M requests and 400,000 GB-s per month) apply to every account.
+Gemini API and Telegram are not included (not AWS).
 
-## Итого
+## Summary
 
-Стоимость = **платформа ≈ $13.8** (постоянно) + **≈ $2.0 за каждый подключённый сервер клиента**.
+Cost = **platform ≈ $13.8** (fixed) + **≈ $2.0 per connected client server**.
 
-| Подключено серверов | 0 | 1 | 10 | 50 | 100 |
+| Connected servers | 0 | 1 | 10 | 50 | 100 |
 |---|---|---|---|---|---|
-| В месяц | $13.8 | $15.8 | $33.8 | $113.8 | $213.8 |
+| Per month | $13.8 | $15.8 | $33.8 | $113.8 | $213.8 |
 
-Платформа почти целиком состоит из демо-сервера. API, Lambda, таблицы и S3 при нашей нагрузке
-стоят центы: платим за запросы, а не за время работы.
+The platform cost is almost entirely the demo server. API, Lambda, tables and S3 cost cents
+at our load: they are billed per request, not per hour.
 
-## Платформа (24/7)
+## Platform (24/7)
 
-| Ресурс | Цена | В месяц |
+| Resource | Price | Per month |
 |---|---|---|
-| Демо-сервер EC2 t3.micro | $0.0108 / час | $7.88 |
-| Elastic IP демо-сервера | $0.005 / час | $3.65 |
-| Диск EBS gp3, 8 ГБ | $0.0836 / ГБ-месяц | $0.67 |
-| Метрики демо-сервера: CWAgent cpu, mem, disk + DemoApp/AppErrors | 4 × $0.30 | $1.20 |
-| Алармы app-errors, cpu-high, disk-high | 3 × $0.10 | $0.30 |
-| Логи CloudWatch (приложение и Lambda, < 0.1 ГБ) | $0.54 / ГБ | < $0.05 |
-| Lambda, API Gateway, DynamoDB, S3, SNS без клиентов | по запросам | < $0.05 |
-| **Итого** | | **≈ $13.8** |
+| Demo server EC2 t3.micro | $0.0108 / hour | $7.88 |
+| Demo server Elastic IP | $0.005 / hour | $3.65 |
+| EBS gp3 disk, 8 GB | $0.0836 / GB-month | $0.67 |
+| Demo server metrics: CWAgent cpu, mem, disk + DemoApp/AppErrors | 4 × $0.30 | $1.20 |
+| Alarms app-errors, cpu-high, disk-high | 3 × $0.10 | $0.30 |
+| CloudWatch Logs (app and Lambda, < 0.1 GB) | $0.54 / GB | < $0.05 |
+| Lambda, API Gateway, DynamoDB, S3, SNS with no clients | per request | < $0.05 |
+| **Total** | | **≈ $13.8** |
 
-## Один подключённый сервер клиента
+## One connected client server
 
-Агент шлёт 1 запрос в минуту = 43 800 запросов в месяц.
+The agent sends 1 request per minute = 43,800 requests per month.
 
-| Ресурс | Расчёт | В месяц |
+| Resource | Calculation | Per month |
 |---|---|---|
-| Метрики cpu, mem, disk, error_count в CloudWatch | 4 × $0.30 | $1.20 |
-| Запросы PutMetricData (1 вызов на все 4 метрики) | 43 800 × $0.01 / 1000 | $0.44 |
-| Алармы на сервер (если создаём 3 штуки) | 3 × $0.10 | $0.30 |
-| API Gateway HTTP API | 43 800 × $1.06 / млн | $0.05 |
-| DynamoDB: чтение ключа + отметка online | 43 800 × ($0.13 + $0.67) / млн | $0.04 |
-| Lambda /ingest (128 МБ, ~100 мс) | до ~22 серверов в бесплатном лимите, дальше | $0.02 |
-| Логи /ingest и ошибки сервера | ~30 МБ × $0.54 / ГБ | $0.02 |
-| **Итого** | | **≈ $2.0** |
+| Metrics cpu, mem, disk, error_count in CloudWatch | 4 × $0.30 | $1.20 |
+| PutMetricData requests (1 call for all 4 metrics) | 43,800 × $0.01 / 1000 | $0.44 |
+| Alarms per server (if we create 3) | 3 × $0.10 | $0.30 |
+| API Gateway HTTP API | 43,800 × $1.06 / million | $0.05 |
+| DynamoDB: key lookup + online status | 43,800 × ($0.13 + $0.67) / million | $0.04 |
+| Lambda /ingest (128 MB, ~100 ms) | free up to ~22 servers, then | $0.02 |
+| /ingest logs and server errors | ~30 MB × $0.54 / GB | $0.02 |
+| **Total** | | **≈ $2.0** |
 
-Разбор инцидента (incident-analyzer) запускается только при аларме и стоит доли цента;
-главный расход на инцидент — запрос к Gemini.
+Incident analysis (incident-analyzer) runs only when an alarm fires and costs a fraction of a cent;
+the main cost per incident is the Gemini request.
 
-## Как снизить стоимость на сервер
+## How to lower the per-server cost
 
-Больше 90% цены сервера — это CloudWatch: метрики ($1.20), запросы PutMetricData ($0.44) и алармы ($0.30).
+Over 90% of the per-server cost is CloudWatch: metrics ($1.20), PutMetricData requests ($0.44) and alarms ($0.30).
 
-- Все 4 метрики отправлять **одним** вызовом PutMetricData: при 4 отдельных вызовах
-  было бы $1.75 вместо $0.44.
-- Если клиентов станет много, пороги (CPU > 80% и т.п.) можно проверять прямо в Lambda /ingest,
-  а последние значения хранить в DynamoDB. Тогда сервер стоит ≈ $0.15 в месяц, но пропадают
-  графики и алармы CloudWatch, и логику тревог пишем сами. Для MVP оставляем CloudWatch.
-- Метрики дешевеют сами: после 10 000 метрик (~2 500 серверов) цена падает с $0.30 до $0.10.
+- Send all 4 metrics in **one** PutMetricData call: 4 separate calls would cost
+  $1.75 instead of $0.44.
+- With many clients, thresholds (CPU > 80% etc.) can be checked directly in the /ingest Lambda,
+  keeping the latest values in DynamoDB. A server then costs ≈ $0.15 per month, but we lose
+  CloudWatch graphs and alarms and have to write the alerting logic ourselves. For the MVP we keep CloudWatch.
+- Metrics get cheaper on their own: after 10,000 metrics (~2,500 servers) the price drops from $0.30 to $0.10.
 
-## Демо-сервер можно выключать
+## The demo server can be turned off
 
-`scripts/demo-down` останавливает демо-сервер (EC2 не тарифицируется, диск, IP и всё остальное
-остаются), `scripts/demo-up` включает обратно с тем же IP. Платформа тогда стоит ≈ $4.6 в месяц
-вместо $13.8. На клиентские серверы это не влияет: API и Lambda работают всегда.
+`scripts/demo-down` stops the demo server (EC2 is not billed; disk, IP and everything else
+stay), `scripts/demo-up` starts it again with the same IP. The platform then costs ≈ $4.6 per month
+instead of $13.8. Client servers are not affected: API and Lambda always run.
 
-## Откуда цены
+## Price sources
 
-| Сервис | Цена |
+| Service | Price |
 |---|---|
-| EC2 t3.micro Linux | $0.0108 / час |
-| Публичный IPv4 (свободный или занятый) | $0.005 / час |
-| EBS gp3 | $0.0836 / ГБ-месяц |
-| CloudWatch: пользовательская метрика (первые 10 000) | $0.30 / месяц |
-| CloudWatch: стандартный аларм | $0.10 / месяц |
-| CloudWatch: PutMetricData | $0.01 / 1000 запросов |
-| CloudWatch Logs: приём | $0.54 / ГБ |
-| API Gateway HTTP API | $1.06 / млн запросов |
-| DynamoDB on-demand: запись / чтение | $0.67 / $0.1345 за млн |
-| Lambda: запросы / вычисления | $0.20 за млн / $0.0000166667 за ГБ·с |
+| EC2 t3.micro Linux | $0.0108 / hour |
+| Public IPv4 (idle or in use) | $0.005 / hour |
+| EBS gp3 | $0.0836 / GB-month |
+| CloudWatch: custom metric (first 10,000) | $0.30 / month |
+| CloudWatch: standard alarm | $0.10 / month |
+| CloudWatch: PutMetricData | $0.01 / 1000 requests |
+| CloudWatch Logs: ingestion | $0.54 / GB |
+| API Gateway HTTP API | $1.06 / million requests |
+| DynamoDB on-demand: write / read | $0.67 / $0.1345 per million |
+| Lambda: requests / compute | $0.20 per million / $0.0000166667 per GB-s |
