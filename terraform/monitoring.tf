@@ -85,14 +85,14 @@ resource "aws_cloudwatch_metric_alarm" "disk_high" {
 # Любой наш аларм перешёл в ALARM -> событие в Lambda
 resource "aws_cloudwatch_event_rule" "alarm_to_lambda" {
   name        = "${var.alarm_prefix}alarm-state-change"
-  description = "Send ALARM state changes of ai-oncall-engineer alarms to the incident Lambda"
+  description = "Send ALARM and OK state changes of ai-oncall-engineer alarms to the incident Lambda"
 
   event_pattern = jsonencode({
     source        = ["aws.cloudwatch"]
     "detail-type" = ["CloudWatch Alarm State Change"]
     detail = {
       alarmName = [{ prefix = var.alarm_prefix }]
-      state     = { value = ["ALARM"] }
+      state     = { value = ["ALARM", "OK"] }
     }
   })
 }
