@@ -38,3 +38,19 @@ moved {
   from = aws_instance.app
   to   = aws_instance.app[0]
 }
+
+# Fixed public IP: survives stop/start and demo-down/demo-up.
+# Not tied to enable_ec2 on purpose; while unattached it costs the same $0.005/h as a public IPv4.
+resource "aws_eip" "app" {
+  domain = "vpc"
+  tags   = { Name = "incident-demo-app" }
+
+  depends_on = [aws_internet_gateway.main]
+}
+
+resource "aws_eip_association" "app" {
+  count = var.enable_ec2 ? 1 : 0
+
+  instance_id   = aws_instance.app[0].id
+  allocation_id = aws_eip.app.id
+}

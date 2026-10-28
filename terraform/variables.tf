@@ -75,3 +75,15 @@ variable "app_allowed_cidr" {
   type        = string
   default     = "0.0.0.0/0"
 }
+
+variable "site_allowed_origins" {
+  description = "Sites allowed to call /register from the browser (CORS)"
+  type        = list(string)
+  default     = ["*"]
+}
+
+variable "servers_metrics_namespace" {
+  description = "CloudWatch namespace for metrics sent by agents on connected servers"
+  type        = string
+  default     = "Kezekshi"
+}

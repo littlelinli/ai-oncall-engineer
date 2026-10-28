@@ -14,13 +14,13 @@ output "instance_id" {
 }
 
 output "instance_public_ip" {
-  description = "Public IP of the demo app"
-  value       = one(aws_instance.app[*].public_ip)
+  description = "Public IP of the demo app (Elastic IP, does not change)"
+  value       = aws_eip.app.public_ip
 }
 
 output "app_url" {
   description = "Demo app URL"
-  value       = var.enable_ec2 ? "http://${aws_instance.app[0].public_ip}:${var.app_port}" : null
+  value       = var.enable_ec2 ? "http://${aws_eip.app.public_ip}:${var.app_port}" : null
 }
 
 output "subnet_id" {
@@ -55,4 +55,24 @@ output "alarm_names" {
 output "incidents_table_arn" {
   description = "DynamoDB table ARN (for Lambda IAM policies)"
   value       = aws_dynamodb_table.incidents.arn
+}
+
+output "register_url" {
+  description = "POST: site gets a server key and the install command (-> #4)"
+  value       = local.register_url
+}
+
+output "ingest_url" {
+  description = "POST: agent sends metrics, header X-Kezekshi-Key (-> #2, #3)"
+  value       = local.ingest_url
+}
+
+output "agent_install_url" {
+  description = "Public agent installer: curl -sSL <url> | sudo bash -s -- --key KEY --name NAME"
+  value       = local.agent_install_url
+}
+
+output "servers_table_name" {
+  description = "DynamoDB table with connected servers"
+  value       = aws_dynamodb_table.servers.name
 }
