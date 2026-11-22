@@ -1,7 +1,9 @@
 """POST /ingest: принимает данные от агента Kezekshi (src/agent/kezekshi_agent.py) раз в минуту.
 
 Заголовок X-Kezekshi-Key: ключ из /register.
-Тело: {"server", "time", "cpu", "mem", "disk", "errors": [...], "error_count"}
+Тело: {"server", "time", "cpu", "mem", "disk", "errors": [...], "error_count",
+       агент v2 ещё: "log_lines", "auth_failures", "not_found", "latency_p95_ms",
+       "health_ok", "response_ms"}
 Ответ 200: {"ok": true, "server_id": "..."};  401: неизвестный ключ;  400: не JSON.
 
 Что делает:
@@ -10,8 +12,10 @@
    (namespace METRICS_NAMESPACE, измерение ServerId). На них висят алармы из /register.
 3. Пишет строки errors в лог-группу SERVERS_LOG_GROUP, поток = server_id.
    Оттуда incident-analyzer берёт контекст для разбора.
-4. При первом контакте сервера создаёт для него 4 аларма с префиксом ALARM_PREFIX
-   (CPU, диск, ошибки, «сервер пропал»). Их ловит общее правило EventBridge.
+4. Создаёт алармы сервера с префиксом ALARM_PREFIX (их ловит общее правило EventBridge).
+   Какие алармы нужны, зависит от того, что присылает агент (см. wanted_alarms):
+   у агента v1 их 5, у агента v2 с проверкой приложения до 9. Недостающие
+   досоздаются автоматически, когда сервер начинает присылать новые поля.
    Алармы создаются здесь, а не в /register: так не остаётся алармов у серверов,
    которые зарегистрировали, но так и не подключили.
 Если CloudWatch временно недоступен, агенту всё равно отвечаем 200: данные следующей
@@ -63,15 +67,25 @@ def number(value, low=0.0, high=None):
     return value
 
 
+# поле агента -> (метрика, единица, максимум)
+FIELDS = (
+    ("cpu", "CpuPercent", "Percent", 100.0),
+    ("mem", "MemPercent", "Percent", 100.0),
+    ("disk", "DiskPercent", "Percent", 100.0),
+    ("error_count", "ErrorCount", "Count", None),
+    ("log_lines", "LogLines", "Count", None),
+    ("auth_failures", "AuthFailures", "Count", None),
+    ("not_found", "NotFound", "Count", None),
+    ("latency_p95_ms", "LatencyP95", "Milliseconds", None),
+    ("health_ok", "HealthOk", "None", 1.0),
+    ("response_ms", "ResponseMs", "Milliseconds", None),
+)
+
+
 def put_metrics(server_id, data):
     dims = [{"Name": "ServerId", "Value": server_id}]
     metrics = [{"MetricName": "Heartbeat", "Dimensions": dims, "Value": 1.0, "Unit": "Count"}]
-    for field, name, unit, high in (
-        ("cpu", "CpuPercent", "Percent", 100.0),
-        ("mem", "MemPercent", "Percent", 100.0),
-        ("disk", "DiskPercent", "Percent", 100.0),
-        ("error_count", "ErrorCount", "Count", None),
-    ):
+    for field, name, unit, high in FIELDS:
         value = number(data.get(field), high=high)
         if value is not None:
             metrics.append({"MetricName": name, "Dimensions": dims, "Value": value, "Unit": unit})
@@ -97,42 +111,78 @@ def put_errors(server_id, errors):
 DOWN_ALARM_DELAY = 300  # секунд после первого контакта до создания server-down
 
 
-def create_alarms(server_id, name, down_only=False):
-    """Алармы сервера. PutMetricAlarm перезаписывает аларм с тем же именем,
-    поэтому повторный вызов безопасен.
-    server-down создаётся отдельно и позже: если создать его сразу, у нового сервера
-    ещё нет данных за прошлые минуты, и аларм ложно уходит в ALARM."""
-    dims = [{"Name": "ServerId", "Value": server_id}]
-    base = f"{ALARM_PREFIX}srv-{server_id}"
-    alarms = [
-        # имя, метрика, статистика, порог, оператор, периодов, нет данных
-        ("cpu-high", "CpuPercent", "Average", 80, "GreaterThanThreshold", 2, "notBreaching",
-         f"CPU above 80% on {name}"),
-        ("disk-high", "DiskPercent", "Maximum", 85, "GreaterThanThreshold", 1, "notBreaching",
-         f"Disk above 85% on {name}"),
-        ("app-errors", "ErrorCount", "Sum", 5, "GreaterThanThreshold", 1, "notBreaching",
-         f"More than 5 errors per minute in logs on {name}"),
-        ("server-down", "Heartbeat", "SampleCount", 1, "LessThanThreshold", 3, "breaching",
-         f"No data from agent for 3 minutes on {name}"),
-    ]
-    for suffix, metric, stat, threshold, op, periods, missing, description in alarms:
-        if (suffix == "server-down") != down_only:
-            continue
-        CW.put_metric_alarm(
-            AlarmName=f"{base}-{suffix}",
-            AlarmDescription=description,
-            Namespace=NAMESPACE,
-            MetricName=metric,
-            Dimensions=dims,
-            Statistic=stat,
-            Period=60,
-            EvaluationPeriods=periods,
-            DatapointsToAlarm=periods,
-            Threshold=threshold,
-            ComparisonOperator=op,
-            TreatMissingData=missing,
-            Tags=[{"Key": "ServerId", "Value": server_id}, {"Key": "ServerName", "Value": name}],
-        )
+# суффикс -> (метрика, статистика, порог, оператор, периодов подряд, нет данных, описание)
+ALARMS = {
+    "cpu-high": ("CpuPercent", "Average", 80, "GreaterThanThreshold", 2, "notBreaching",
+                 "CPU above 80% on {name}"),
+    "mem-high": ("MemPercent", "Average", 90, "GreaterThanThreshold", 3, "notBreaching",
+                 "Memory above 90% for 3 minutes on {name}"),
+    "disk-high": ("DiskPercent", "Maximum", 85, "GreaterThanThreshold", 1, "notBreaching",
+                  "Disk above 85% on {name}"),
+    "app-errors": ("ErrorCount", "Sum", 5, "GreaterThanThreshold", 1, "notBreaching",
+                   "More than 5 errors per minute in logs on {name}"),
+    "server-down": ("Heartbeat", "SampleCount", 1, "LessThanThreshold", 3, "breaching",
+                    "No data from agent for 3 minutes on {name}"),
+    "app-down": ("HealthOk", "Average", 0.5, "LessThanThreshold", 2, "notBreaching",
+                 "Application does not respond to health check for 2 minutes on {name}"),
+    "slow-responses": (None, "Average", 2000, "GreaterThanThreshold", 3, "notBreaching",
+                       "Responses slower than 2 s for 3 minutes on {name}"),
+    "auth-attack": ("AuthFailures", "Sum", 60, "GreaterThanThreshold", 2, "notBreaching",
+                    "More than 60 failed logins (401/403) per minute on {name}"),
+    "log-flood": ("LogLines", "Sum", 12000, "GreaterThanThreshold", 3, "notBreaching",
+                  "More than 12000 log lines per minute on {name}"),
+}
+
+
+def wanted_alarms(data, first_seen, now):
+    """Какие алармы нужны серверу, судя по тому, что прислал агент."""
+    want = {"cpu-high", "mem-high", "disk-high", "app-errors"}
+    if now - first_seen >= DOWN_ALARM_DELAY:
+        want.add("server-down")
+    if data.get("health_ok") is not None:
+        want.add("app-down")
+    if data.get("latency_p95_ms") is not None or data.get("response_ms") is not None:
+        want.add("slow-responses")
+    if data.get("auth_failures") is not None:
+        want.add("auth-attack")
+    if data.get("log_lines") is not None:
+        want.add("log-flood")
+    return want
+
+
+def create_alarm(server_id, name, suffix, data):
+    """PutMetricAlarm перезаписывает аларм с тем же именем, повтор безопасен.
+    server-down создаётся только через DOWN_ALARM_DELAY после первого контакта:
+    иначе у нового сервера нет данных за прошлые минуты, и аларм ложно уходит в ALARM."""
+    metric, stat, threshold, op, periods, missing, description = ALARMS[suffix]
+    if suffix == "slow-responses":
+        # задержка реальных запросов из логов точнее, чем одна проверка в 20 секунд
+        metric = "LatencyP95" if data.get("latency_p95_ms") is not None else "ResponseMs"
+    CW.put_metric_alarm(
+        AlarmName=f"{ALARM_PREFIX}srv-{server_id}-{suffix}",
+        AlarmDescription=description.format(name=name),
+        Namespace=NAMESPACE,
+        MetricName=metric,
+        Dimensions=[{"Name": "ServerId", "Value": server_id}],
+        Statistic=stat,
+        Period=60,
+        EvaluationPeriods=periods,
+        DatapointsToAlarm=periods,
+        Threshold=threshold,
+        ComparisonOperator=op,
+        TreatMissingData=missing,
+        Tags=[{"Key": "ServerId", "Value": server_id}, {"Key": "ServerName", "Value": name}],
+    )
+
+
+def created_alarms(server):
+    done = set(server.get("alarm_set") or [])
+    # серверы, подключённые до v4, отмечены старыми флагами
+    if server.get("alarms_created"):
+        done |= {"cpu-high", "disk-high", "app-errors"}
+    if server.get("down_alarm_created"):
+        done.add("server-down")
+    return done
 
 
 def lambda_handler(event, context):
@@ -166,6 +216,21 @@ def lambda_handler(event, context):
     server_id = server["server_id"]
     errors = data.get("errors") if isinstance(data.get("errors"), list) else []
     problems = []
+    now = int(time.time())
+    try:
+        first_seen = int(server.get("first_seen") or now)
+        done = created_alarms(server)
+        missing = wanted_alarms(data, first_seen, now) - done
+        for suffix in sorted(missing):
+            create_alarm(server_id, server["name"], suffix, data)
+        if missing or not server.get("first_seen"):
+            TABLE.update_item(
+                Key={"key_hash": key_hash},
+                UpdateExpression="SET alarm_set = :a, first_seen = if_not_exists(first_seen, :now)",
+                ExpressionAttributeValues={":a": sorted(done | missing), ":now": now},
+            )
+    except Exception as exc:  # попробуем ещё раз со следующей минутой
+        problems.append(f"alarms: {exc}")
     try:
         put_metrics(server_id, data)
     except Exception as exc:
@@ -174,29 +239,11 @@ def lambda_handler(event, context):
         put_errors(server_id, errors)
     except Exception as exc:
         problems.append(f"logs: {exc}")
-    # Алармы после метрик этой минуты: аларм сразу видит свежую точку
-    now = int(time.time())
-    try:
-        if not server.get("alarms_created"):
-            create_alarms(server_id, server["name"])
-            TABLE.update_item(
-                Key={"key_hash": key_hash},
-                UpdateExpression="SET alarms_created = :t, first_seen = if_not_exists(first_seen, :now)",
-                ExpressionAttributeValues={":t": True, ":now": now},
-            )
-        elif not server.get("down_alarm_created") and now - int(server.get("first_seen", 0)) >= DOWN_ALARM_DELAY:
-            create_alarms(server_id, server["name"], down_only=True)
-            TABLE.update_item(
-                Key={"key_hash": key_hash},
-                UpdateExpression="SET down_alarm_created = :t",
-                ExpressionAttributeValues={":t": True},
-            )
-    except Exception as exc:  # попробуем ещё раз со следующей минутой
-        problems.append(f"alarms: {exc}")
 
     print(json.dumps({
         "server_id": server_id, "name": server["name"],
         "cpu": data.get("cpu"), "mem": data.get("mem"), "disk": data.get("disk"),
-        "error_count": data.get("error_count"), "problems": problems,
+        "error_count": data.get("error_count"), "health_ok": data.get("health_ok"),
+        "agent_version": data.get("agent_version", 1), "problems": problems,
     }, ensure_ascii=False))
     return response(200, {"ok": True, "server_id": server_id})

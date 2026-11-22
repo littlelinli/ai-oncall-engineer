@@ -2,7 +2,10 @@
 # Установка агента Kezekshi одной командой:
 #   curl -sSL <адрес>/install.sh | sudo bash -s -- --key КЛЮЧ --name shop-api-prod
 # Необязательно: --url <адрес /ingest>  --logs /путь/к/app.log,/другой.log
-# Работает на Amazon Linux, Ubuntu, Debian, CentOS/RHEL с systemd. Повторный запуск обновляет агент.
+#               --health http://127.0.0.1:8080/health  (проверка, что приложение отвечает)
+# Работает на Amazon Linux, Ubuntu, Debian, CentOS/RHEL с systemd.
+# Обновление уже установленного агента без ключа: sudo bash install.sh --upgrade [--health URL]
+#   (ключ, имя, адрес и логи берутся из /etc/kezekshi/agent.env)
 set -euo pipefail
 
 KEY=""; NAME="$(hostname)"; URL="${KEZEKSHI_DEFAULT_INGEST_URL:-}"; LOGS=""
@@ -12,12 +15,20 @@ while [ $# -gt 0 ]; do
     --name) NAME="$2"; shift 2 ;;
     --url)  URL="$2";  shift 2 ;;
     --logs) LOGS="$2"; shift 2 ;;
+    --health) HEALTH="$2"; shift 2 ;;
+    --upgrade) UPGRADE=1; shift ;;
     -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
     *) echo "Неизвестный параметр: $1" >&2; exit 1 ;;
   esac
 done
 
 if [ "$(id -u)" -ne 0 ]; then echo "Запустите через sudo" >&2; exit 1; fi
+if [ "$UPGRADE" = 1 ]; then
+  [ -f /etc/kezekshi/agent.env ] || { echo "Агент ещё не установлен, нужен --key" >&2; exit 1; }
+  old() { grep "^$1=" /etc/kezekshi/agent.env | head -1 | cut -d= -f2-; }
+  KEY="$(old KEZEKSHI_KEY)"; NAME="$(old KEZEKSHI_SERVER)"; URL="$(old KEZEKSHI_INGEST_URL)"
+  LOGS="${LOGS:-$(old KEZEKSHI_LOG_FILES)}"; HEALTH="${HEALTH:-$(old KEZEKSHI_HEALTH_URL)}"
+fi
 if [ -z "$KEY" ]; then echo "Нужен ключ: --key КЛЮЧ" >&2; exit 1; fi
 if ! command -v systemctl >/dev/null; then echo "Нужен systemd" >&2; exit 1; fi
 case "$NAME" in *[!A-Za-z0-9._-]*) echo "Имя сервера: только буквы, цифры, точка, _ и -" >&2; exit 1 ;; esac
@@ -41,8 +52,9 @@ fi
 mkdir -p /opt/kezekshi /etc/kezekshi
 cat > /opt/kezekshi/kezekshi_agent.py <<'KZ_AGENT_EOF'
 #!/usr/bin/env python3
-"""Kezekshi agent: раз в минуту собирает CPU, память, диск и новые строки ERROR
-из лога и отправляет их JSON-ом на /ingest. Только стандартная библиотека Python.
+"""Kezekshi agent v2: раз в минуту собирает CPU, память, диск, новые строки ERROR
+и статистику логов, проверяет, отвечает ли приложение, и отправляет всё JSON-ом на /ingest.
+Только стандартная библиотека Python.
 
 Настройки из переменных окружения (файл /etc/kezekshi/agent.env):
   KEZEKSHI_KEY        ключ сервера (выдаёт /register)
@@ -50,6 +62,8 @@ cat > /opt/kezekshi/kezekshi_agent.py <<'KZ_AGENT_EOF'
   KEZEKSHI_INGEST_URL адрес /ingest; пусто = режим проверки, JSON печатается в консоль
   KEZEKSHI_LOG_FILES  пути к логам через запятую (необязательно)
   KEZEKSHI_INTERVAL   период в секундах (по умолчанию 60)
+  KEZEKSHI_HEALTH_URL адрес приложения для проверки (необязательно), например
+                      http://127.0.0.1:8080/health. Проверяется 3 раза за период.
 """
 import json
 import os
@@ -57,6 +71,7 @@ import re
 import shutil
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
@@ -65,8 +80,14 @@ SERVER = os.environ.get("KEZEKSHI_SERVER", os.uname().nodename)
 INGEST_URL = os.environ.get("KEZEKSHI_INGEST_URL", "")
 LOG_FILES = [p.strip() for p in os.environ.get("KEZEKSHI_LOG_FILES", "").split(",") if p.strip()]
 INTERVAL = int(os.environ.get("KEZEKSHI_INTERVAL", "60"))
+HEALTH_URL = os.environ.get("KEZEKSHI_HEALTH_URL", "").strip()
+HEALTH_TIMEOUT = 5.0
+PROBES = 3
 MAX_ERRORS = 20
 ERROR_RE = re.compile(r"\b(ERROR|CRITICAL|FATAL|Traceback)\b|\"level\":\s*\"ERROR\"")
+# код ответа: JSON-лог ("status": 401) или access-лог nginx/apache ("GET / HTTP/1.1" 401 ...)
+STATUS_RE = re.compile(r"\"status\":\s*(\d{3})\b|\"\s(\d{3})\s")
+LATENCY_KEYS = ("latency_ms", "duration_ms", "response_time_ms", "elapsed_ms")
 # убираем личные данные перед отправкой
 SECRET_RES = [
     (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "<email>"),
@@ -131,6 +152,47 @@ class LogTail:
         return data.splitlines()
 
 
+def log_stats(lines):
+    """Сколько строк, сколько 401/403 и 404, задержка p95 (если лог её пишет)."""
+    auth = nf = 0
+    lat = []
+    for line in lines:
+        m = STATUS_RE.search(line)
+        if m:
+            code = int(m.group(1) or m.group(2))
+            auth += code in (401, 403)
+            nf += code == 404
+        if line.startswith("{") and "_ms" in line:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            for k in LATENCY_KEYS:
+                v = rec.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    lat.append(float(v))
+                    break
+    p95 = None
+    if lat:
+        lat.sort()
+        p95 = round(lat[min(len(lat) - 1, int(0.95 * len(lat)))], 1)
+    return {"log_lines": len(lines), "auth_failures": auth, "not_found": nf, "latency_p95_ms": p95}
+
+
+def probe():
+    """(ok, мс). ok = приложение ответило кодом ниже 500 за HEALTH_TIMEOUT."""
+    t = time.time()
+    try:
+        with urllib.request.urlopen(HEALTH_URL, timeout=HEALTH_TIMEOUT) as r:
+            r.read(65536)
+            ok = r.status < 500
+    except urllib.error.HTTPError as e:
+        ok = e.code < 500
+    except Exception:
+        ok = False
+    return ok, round((time.time() - t) * 1000, 1)
+
+
 def send(payload):
     body = json.dumps(payload).encode()
     if not INGEST_URL:
@@ -155,24 +217,39 @@ def main():
     prev = cpu_times()
     time.sleep(1)
     while True:
+        # за период: несколько проверок приложения через равные промежутки
+        probes = []
+        for i in range(PROBES if HEALTH_URL else 1):
+            if HEALTH_URL:
+                probes.append(probe())
+            if not os.environ.get("KEZEKSHI_ONCE"):
+                time.sleep(INTERVAL / (PROBES if HEALTH_URL else 1))
         cpu, prev = cpu_percent(prev)
-        errors = []
+        lines = []
         for t in tails:
-            errors += [clean(l) for l in t.new_lines() if ERROR_RE.search(l)]
+            lines += t.new_lines()
+        errors = [clean(l) for l in lines if ERROR_RE.search(l)]
         payload = {
             "key": KEY,
             "server": SERVER,
             "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "agent_version": 2,
             "cpu": cpu,
             "mem": mem_percent(),
             "disk": disk_percent(),
             "errors": errors[-MAX_ERRORS:],
             "error_count": len(errors),
         }
+        payload.update(log_stats(lines) if tails else {})
+        if probes:
+            ok = [p for p in probes if p[0]]
+            payload["health_ok"] = 1 if len(ok) * 2 > len(probes) else 0
+            # время ответа: медиана удачных проверок; если все упали, считаем таймаут
+            times = sorted(p[1] for p in ok) or [HEALTH_TIMEOUT * 1000]
+            payload["response_ms"] = times[len(times) // 2]
         send(payload)
         if os.environ.get("KEZEKSHI_ONCE"):
             return
-        time.sleep(INTERVAL)
 
 
 if __name__ == "__main__":
@@ -186,6 +263,7 @@ KEZEKSHI_SERVER=$NAME
 KEZEKSHI_INGEST_URL=$URL
 KEZEKSHI_LOG_FILES=$LOGS
 KEZEKSHI_INTERVAL=60
+KEZEKSHI_HEALTH_URL=$HEALTH
 EOF
 chmod 600 /etc/kezekshi/agent.env
 
@@ -213,6 +291,7 @@ sleep 2
 if systemctl is-active --quiet kezekshi-agent; then
   echo "Kezekshi: агент запущен на сервере $NAME"
   echo "Логи: ${LOGS:-не найдены, укажите --logs}"
+  echo "Проверка приложения: ${HEALTH:-выключена (можно включить: --health URL)}"
   [ -z "$URL" ] && echo "Режим проверки: адрес /ingest не задан, данные печатаются в journalctl -u kezekshi-agent"
   echo "Первые метрики появятся через минуту."
 else

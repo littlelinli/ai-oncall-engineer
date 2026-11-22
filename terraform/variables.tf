@@ -93,3 +93,9 @@ variable "app_running" {
   type        = bool
   default     = true
 }
+
+variable "auto_fix" {
+  description = "Let incident-analyzer run /fix on the demo server when an alarm fires (keep false while ShopSim collects the dataset)"
+  type        = bool
+  default     = false
+}
