@@ -145,12 +145,13 @@ def to_ddb(x):
     return json.loads(json.dumps(x), parse_float=Decimal)
 
 
-def should_warn(table, server_id, code, now_ts):
+def should_warn(table, server_id, code, now_ts, text=""):
     key = {"server_id": server_id, "ts": f"warn#{code}"}
     last = table.get_item(Key=key).get("Item")
     if last and now_ts - float(last.get("sent_at", 0)) < WARN_COOLDOWN:
         return False
-    table.put_item(Item={**key, "sent_at": Decimal(str(int(now_ts))),
+    # text и sent_at читает incident-analyzer: «ML-агент предупреждал за N мин»
+    table.put_item(Item={**key, "sent_at": Decimal(str(int(now_ts))), "text": text,
                          "expires_at": int(now_ts) + TTL_DAYS * 86400})
     return True
 
@@ -202,7 +203,7 @@ def handler(event, context):
             })
             put_forecast_metrics(sid, fc, now_ts)
             for code, text in risks:
-                if should_warn(table, sid, code, now_ts):
+                if should_warn(table, sid, code, now_ts, text):
                     send_telegram(f"🔮 Прогноз: {names.get(sid, sid)}\n{text}\n"
                                   f"Аларм ещё не сработал, это предупреждение заранее.")
         except Exception as e:  # один сломанный сервер не должен мешать остальным

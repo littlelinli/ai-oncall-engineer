@@ -35,10 +35,13 @@ variable "app_port" {
 }
 
 # Secrets: set them in envs/dev.tfvars (not in git) or as TF_VAR_* env variables
+# Not used any more: incident-analyzer explains incidents with its own rules (explain.py).
+# Kept so that old dev.tfvars files still work. Remove together with the line in tfvars.
 variable "gemini_api_key" {
-  description = "Gemini API key for the incident Lambda"
+  description = "Deprecated, not used"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "telegram_bot_token" {
@@ -98,4 +101,10 @@ variable "auto_fix" {
   description = "Let incident-analyzer run /fix on the demo server when an alarm fires (keep false while ShopSim collects the dataset)"
   type        = bool
   default     = false
+}
+
+variable "demo_server_id" {
+  description = "ServerId of the Kezekshi agent on the demo EC2 (auto-fix is allowed only there)"
+  type        = string
+  default     = ""
 }
