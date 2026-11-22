@@ -23,6 +23,7 @@ from decimal import Decimal
 import boto3
 
 import model
+import recipients
 
 NAMESPACE = os.environ.get("METRICS_NAMESPACE", "Kezekshi")
 FORECAST_NS = os.environ.get("FORECAST_NAMESPACE", "Kezekshi/Forecast")
@@ -163,9 +164,8 @@ def should_warn(table, server_id, code, now_ts, text=""):
     return True
 
 
-def send_telegram(text):
+def send_telegram(text, chat_id):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         print("Telegram не настроен, пропускаю")
         return
@@ -216,7 +216,12 @@ def handler(event, context):
                         "ru": f"🔮 Прогноз: {name}\n{text['ru']}\nАларм ещё не сработал, это предупреждение заранее.",
                         "en": f"🔮 Forecast: {name}\n{text['en']}\nNo alarm yet, this is an early warning.",
                     }
-                    send_telegram("\n\n— — —\n\n".join(blocks[l] for l in LANGS))
+                    # владельцу сервера на его языке и/или в чат команды (см. recipients.py)
+                    for chat_id, langs in recipients.telegram_targets(sid, LANGS):
+                        try:
+                            send_telegram("\n\n— — —\n\n".join(blocks[l] for l in langs), chat_id)
+                        except Exception as e:
+                            print(f"telegram {chat_id}: {e}")
         except Exception as e:  # один сломанный сервер не должен мешать остальным
             print(f"server {sid}: {e!r}")
     print(json.dumps({"servers": len(result), "risks": {k: v["risks"] for k, v in result.items()}}))

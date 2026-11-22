@@ -30,6 +30,28 @@
       <span class="source-pill" id="source-pill">Тестовые данные</span>
     </div>
 
+    <div class="demo-note" id="demo-note" hidden>
+      Это витрина: инциденты нашего демо-сервера. <a href="login.html">Войдите</a> или
+      <a href="login.html?tab=signup">зарегистрируйтесь</a>, чтобы подключить свои серверы и получать уведомления в Telegram.
+    </div>
+
+    <section class="panel" id="servers-panel" aria-labelledby="servers-title" style="margin-bottom:24px" hidden>
+      <div class="panel-head">
+        <h2 id="servers-title">Мои серверы</h2>
+        <div class="account-bar">
+          <label for="lang-select" class="inc-meta">Язык уведомлений</label>
+          <select class="select" id="lang-select">
+            <option value="both">RU + EN</option>
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+          </select>
+          <button class="btn btn-ghost btn-small" type="button" id="tg-btn">Подключить Telegram</button>
+          <a class="btn btn-primary btn-small" href="connect.html">Добавить сервер</a>
+        </div>
+      </div>
+      <ul class="server-list" id="server-list"></ul>
+    </section>
+
     <section class="stats" aria-label="Сводка">
       <div class="stat is-open"><div class="stat-value" id="stat-open">0</div><div class="stat-label">Открыто сейчас</div></div>
       <div class="stat"><div class="stat-value" id="stat-week">0</div><div class="stat-label">За 7 дней</div></div>
@@ -76,6 +98,7 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="assets/config.js"></script>
+  <script src="assets/auth.js"></script>
   <script src="assets/mock-data.js"></script>
   <script src="assets/dashboard.js"></script>
 </body>

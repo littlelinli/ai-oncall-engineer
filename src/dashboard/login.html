@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Kezekshi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Kezekshi</span></a>
+      <nav class="nav" aria-label="Основное меню">
+        <a href="index.html">Главная</a>
+        <a href="dashboard.html">Дашборд</a>
+        <a href="connect.html">Подключить сервер</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap auth-wrap">
+    <section class="panel auth-panel">
+      <div class="panel-head">
+        <div class="filters" role="tablist" aria-label="Вход или регистрация">
+          <button class="chip" role="tab" data-tab="login" aria-pressed="true">Вход</button>
+          <button class="chip" role="tab" data-tab="signup" aria-pressed="false">Регистрация</button>
+        </div>
+      </div>
+      <div class="panel-body">
+
+        <form id="form-login" data-view="login" novalidate>
+          <h1 class="auth-title">Вход в Kezekshi</h1>
+          <div class="form-field"><label for="login-email">Почта</label>
+            <input class="input" id="login-email" type="email" autocomplete="email" required></div>
+          <div class="form-field"><label for="login-password">Пароль</label>
+            <input class="input" id="login-password" type="password" autocomplete="current-password" required></div>
+          <div class="field-error" data-error hidden></div>
+          <button class="btn btn-primary auth-btn" type="submit">Войти</button>
+          <p class="auth-links"><a href="#" data-go="forgot">Забыли пароль?</a></p>
+        </form>
+
+        <form id="form-signup" data-view="signup" novalidate hidden>
+          <h1 class="auth-title">Создать аккаунт</h1>
+          <div class="form-field"><label for="signup-email">Почта</label>
+            <input class="input" id="signup-email" type="email" autocomplete="email" required></div>
+          <div class="form-field"><label for="signup-password">Пароль</label>
+            <input class="input" id="signup-password" type="password" autocomplete="new-password" required>
+            <p class="auth-hint">Минимум 8 символов, строчные буквы и цифры.</p></div>
+          <div class="field-error" data-error hidden></div>
+          <button class="btn btn-primary auth-btn" type="submit">Зарегистрироваться</button>
+        </form>
+
+        <form id="form-confirm" data-view="confirm" novalidate hidden>
+          <h1 class="auth-title">Подтвердите почту</h1>
+          <p class="auth-hint">Мы отправили код на <b id="confirm-email"></b>. Письмо может попасть в «Спам».</p>
+          <div class="form-field"><label for="confirm-code">Код из письма</label>
+            <input class="input" id="confirm-code" inputmode="numeric" autocomplete="one-time-code" required></div>
+          <div class="field-error" data-error hidden></div>
+          <button class="btn btn-primary auth-btn" type="submit">Подтвердить</button>
+          <p class="auth-links"><a href="#" id="resend-link">Отправить код ещё раз</a></p>
+        </form>
+
+        <form id="form-forgot" data-view="forgot" novalidate hidden>
+          <h1 class="auth-title">Восстановить пароль</h1>
+          <div class="form-field"><label for="forgot-email">Почта</label>
+            <input class="input" id="forgot-email" type="email" autocomplete="email" required></div>
+          <div class="field-error" data-error hidden></div>
+          <button class="btn btn-primary auth-btn" type="submit">Получить код</button>
+          <p class="auth-links"><a href="#" data-go="login">Назад ко входу</a></p>
+        </form>
+
+        <form id="form-reset" data-view="reset" novalidate hidden>
+          <h1 class="auth-title">Новый пароль</h1>
+          <p class="auth-hint">Код отправлен на <b id="reset-email"></b>.</p>
+          <div class="form-field"><label for="reset-code">Код из письма</label>
+            <input class="input" id="reset-code" inputmode="numeric" autocomplete="one-time-code" required></div>
+          <div class="form-field"><label for="reset-password">Новый пароль</label>
+            <input class="input" id="reset-password" type="password" autocomplete="new-password" required></div>
+          <div class="field-error" data-error hidden></div>
+          <button class="btn btn-primary auth-btn" type="submit">Сохранить и войти</button>
+        </form>
+
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="assets/config.js"></script>
+  <script src="assets/auth.js"></script>
+  <script src="assets/login.js"></script>
+</body>
+</html>

@@ -1,4 +1,5 @@
-# Lambda kezekshi-api: отдаёт сайту инциденты из DynamoDB через публичный Function URL.
+# Lambda kezekshi-api: публичный Function URL, отдаёт сайту инциденты демо-сервера (витрина без входа).
+# Инциденты своих серверов пользователь получает через личный кабинет (accounts.tf).
 # Code: src/lambda/api/lambda_function.py
 
 data "archive_file" "api" {
@@ -49,7 +50,8 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      TABLE_NAME = aws_dynamodb_table.incidents.name
+      TABLE_NAME     = aws_dynamodb_table.incidents.name
+      DEMO_SERVER_ID = var.demo_server_id # без входа сайт показывает только демо-сервер
     }
   }
 

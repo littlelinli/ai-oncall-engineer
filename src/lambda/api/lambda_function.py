@@ -1,4 +1,5 @@
-"""API-функция для сайта: читает инциденты из DynamoDB.
+"""Публичное API для сайта: инциденты демо-сервера (витрина для тех, кто не вошёл).
+Инциденты серверов клиентов отдаёт только личный кабинет (src/lambda/account, нужен вход).
 
 Маршруты (Lambda Function URL, HTTP API или REST с proxy-интеграцией):
   GET /incidents        -> список инцидентов, новые сверху
@@ -20,6 +21,13 @@ import boto3
 TABLE_NAME = os.environ.get("TABLE_NAME", "aiops-incidents")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 KEY_NAME = os.environ.get("KEY_NAME", "incident_id")  # ключ партиции таблицы: incident_id или id
+DEMO_SERVER_ID = os.environ.get("DEMO_SERVER_ID", "")
+
+
+def is_public(item):
+    """Демо-сервер или старые инциденты демо-приложения (без server_id)."""
+    sid = item.get("server_id") or ""
+    return sid == "" or sid == DEMO_SERVER_ID
 table = boto3.resource("dynamodb").Table(TABLE_NAME)
 
 
@@ -47,7 +55,7 @@ def _list_incidents():
     items, kwargs = [], {}
     while True:  # таблица маленькая, Scan с постраничным чтением достаточно
         page = table.scan(**kwargs)
-        items.extend(page.get("Items", []))
+        items.extend(i for i in page.get("Items", []) if is_public(i))
         if "LastEvaluatedKey" not in page:
             break
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
@@ -66,7 +74,7 @@ def lambda_handler(event, context):
     try:
         if incident_id:
             item = table.get_item(Key={KEY_NAME: incident_id}).get("Item")
-            if not item:
+            if not item or not is_public(item):
                 return _response(404, {"error": "not found"})
             return _response(200, item)
         return _response(200, _list_incidents())

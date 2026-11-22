@@ -182,11 +182,11 @@ resource "aws_apigatewayv2_api" "servers" {
   name          = "kezekshi-servers-api"
   protocol_type = "HTTP"
 
-  # The site calls /register from the browser
+  # The site calls /register and the account API (/me/*) from the browser
   cors_configuration {
     allow_origins = var.site_allowed_origins
-    allow_methods = ["POST", "OPTIONS"]
-    allow_headers = ["content-type", "x-kezekshi-key"]
+    allow_methods = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+    allow_headers = ["content-type", "authorization", "x-kezekshi-key"]
     max_age       = 3600
   }
 }
@@ -201,7 +201,7 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_burst_limit = 40
   }
 
-  # /register is public, so it gets a tighter limit
+  # /register creates records, so it gets a tighter limit
   route_settings {
     route_key              = aws_apigatewayv2_route.register.route_key
     throttling_rate_limit  = 2
@@ -216,10 +216,13 @@ resource "aws_apigatewayv2_integration" "register" {
   payload_format_version = "2.0"
 }
 
+# Only logged-in users can register a server: it is bound to their account (accounts.tf)
 resource "aws_apigatewayv2_route" "register" {
-  api_id    = aws_apigatewayv2_api.servers.id
-  route_key = "POST /register"
-  target    = "integrations/${aws_apigatewayv2_integration.register.id}"
+  api_id             = aws_apigatewayv2_api.servers.id
+  route_key          = "POST /register"
+  target             = "integrations/${aws_apigatewayv2_integration.register.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_lambda_permission" "register_api" {

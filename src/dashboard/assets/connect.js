@@ -10,6 +10,13 @@
 
   const cfg = window.APP_CONFIG || {};
   const REGISTER_URL = (cfg.REGISTER_URL || "").trim();
+  const A = window.KZ_AUTH;
+
+  // Подключать серверы можно только из аккаунта: сервер привязывается к нему
+  if (!A || !A.loggedIn()) {
+    location.replace("login.html?next=connect.html");
+    return;
+  }
 
   function showToast(text) {
     toast.textContent = text;
@@ -47,14 +54,12 @@
     submitBtn.disabled = true;
     submitBtn.textContent = "Получаем команду…";
     try {
-      const resp = await fetch(REGISTER_URL, {
+      const data = await A.call(REGISTER_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, cloud: cloudInput ? cloudInput.value : "aws" }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || !data.command) {
-        showError(data.error || "Не удалось получить команду (код " + resp.status + "). Попробуйте ещё раз.");
+      }).catch((err) => ({ error: err.message }));
+      if (!data.command) {
+        showError(data.error || "Не удалось получить команду. Попробуйте ещё раз.");
         return;
       }
       document.getElementById("result-name").textContent = data.name || name;

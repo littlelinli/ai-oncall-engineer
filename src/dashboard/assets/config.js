@@ -1,15 +1,19 @@
-// Настройки сайта. Пока API_URL пустой, дашборд показывает тестовые данные из mock-data.js.
-// Адреса без пробелов и без "/" в конце.
+// Настройки сайта. Значения адресов подставляет Terraform (terraform/site.tf) при выкладке,
+// поэтому здесь в репо они могут быть пустыми или старыми. Адреса без "/" в конце.
 window.APP_CONFIG = {
-  // API для дашборда: GET {API_URL}/incidents
-  API_URL: "https://qhp5ilkxhrkp6gjup25ejjrxfq0lyahc.lambda-url.eu-north-1.on.aws",
+  // Публичное API: инциденты демо-сервера для тех, кто не вошёл (GET {API_URL}/incidents)
+  API_URL: "",
 
-  // Регистрация сервера для страницы «Подключить сервер» (POST, ответ с полем command)
-  REGISTER_URL: "https://92kxgkp862.execute-api.eu-north-1.amazonaws.com/register",
+  // Регистрация сервера (POST, нужен вход)
+  REGISTER_URL: "",
 
-  // Адрес демо-приложения на EC2 для кнопок «Сломать сервис».
-  DEMO_APP_URL: "",
+  // Личный кабинет: GET {ACCOUNT_API_URL}/me, /me/servers, /me/incidents ... (нужен вход)
+  ACCOUNT_API_URL: "",
 
-  // Как часто обновлять список инцидентов, в секундах (0 = не обновлять)
-  REFRESH_SECONDS: 15
+  // Вход через Amazon Cognito
+  COGNITO_REGION: "",
+  COGNITO_CLIENT_ID: "",
+
+  // Как часто обновлять дашборд, в секундах (0 = не обновлять)
+  REFRESH_SECONDS: 30
 };

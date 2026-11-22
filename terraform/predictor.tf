@@ -53,6 +53,11 @@ data "aws_iam_policy_document" "predictor" {
     actions   = ["dynamodb:Scan"]
     resources = [aws_dynamodb_table.servers.arn]
   }
+  # owner's Telegram chat (recipients.py)
+  statement {
+    actions   = ["dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.users.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "predictor" {
@@ -84,6 +89,7 @@ resource "aws_lambda_function" "predictor" {
       FORECAST_NAMESPACE = "${var.servers_metrics_namespace}/Forecast"
       TELEGRAM_BOT_TOKEN = var.telegram_bot_token
       TELEGRAM_CHAT_ID   = var.telegram_chat_id
+      USERS_TABLE        = aws_dynamodb_table.users.name
     }
   }
 

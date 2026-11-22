@@ -63,6 +63,18 @@ data "aws_iam_policy_document" "incident_analyzer" {
     resources = [aws_dynamodb_table.incidents.arn]
   }
 
+  # Who gets the message: owner of the server and his Telegram chat (recipients.py)
+  statement {
+    sid       = "FindOwner"
+    actions   = ["dynamodb:Scan"]
+    resources = [aws_dynamodb_table.servers.arn]
+  }
+  statement {
+    sid       = "OwnerTelegram"
+    actions   = ["dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.users.arn]
+  }
+
   # "ML-агент предупреждал об этом за N мин": warning records of kezekshi-predictor
   statement {
     sid       = "ReadForecastWarnings"
@@ -124,6 +136,8 @@ resource "aws_lambda_function" "incident_analyzer" {
       AUTO_FIX           = var.auto_fix ? "true" : "false"
       PREDICTIONS_TABLE  = "kezekshi-predictions"
       DEMO_SERVER_ID     = var.demo_server_id
+      SERVERS_TABLE      = aws_dynamodb_table.servers.name
+      USERS_TABLE        = aws_dynamodb_table.users.name
     }
   }
 
