@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Дашборд — Kezekshi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Kezekshi</span></a>
+      <nav class="nav" aria-label="Основное меню">
+        <a href="index.html">Главная</a>
+        <a href="dashboard.html" aria-current="page">Дашборд</a>
+        <a href="connect.html">Подключить сервер</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="page-head">
+      <div>
+        <h1>Инциденты</h1>
+        <p id="page-sub">Сервис demo-app, регион eu-north-1</p>
+      </div>
+      <span class="source-pill" id="source-pill">Тестовые данные</span>
+    </div>
+
+    <section class="stats" aria-label="Сводка">
+      <div class="stat is-open"><div class="stat-value" id="stat-open">0</div><div class="stat-label">Открыто сейчас</div></div>
+      <div class="stat"><div class="stat-value" id="stat-week">0</div><div class="stat-label">За 7 дней</div></div>
+      <div class="stat"><div class="stat-value" id="stat-mttr">—</div><div class="stat-label">Среднее время до решения</div></div>
+    </section>
+
+    <div class="top-grid">
+      <section class="panel" aria-labelledby="chart-title">
+        <div class="panel-head"><h2 id="chart-title">Инциденты за 14 дней</h2></div>
+        <div class="panel-body">
+          <svg class="chart-svg" id="chart" role="img" aria-label="Количество инцидентов по дням"></svg>
+          <div class="chart-legend">
+            <span><i style="background:var(--alert)"></i>Критичные и высокие</span>
+            <span><i style="background:#7f9bd1"></i>Средние и низкие</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="alarms-title">
+        <div class="panel-head"><h2 id="alarms-title">Тревоги</h2></div>
+        <ul class="alarm-list" id="alarm-list"></ul>
+      </section>
+    </div>
+
+    <div class="main-grid">
+      <section class="panel" aria-labelledby="list-title">
+        <div class="panel-head">
+          <h2 id="list-title">История</h2>
+          <div class="filters" role="group" aria-label="Фильтр по статусу">
+            <button class="chip" data-filter="all" aria-pressed="true">Все</button>
+            <button class="chip" data-filter="open" aria-pressed="false">Открытые</button>
+            <button class="chip" data-filter="resolved" aria-pressed="false">Решённые</button>
+          </div>
+        </div>
+        <ul class="inc-list" id="inc-list"></ul>
+      </section>
+
+      <section class="panel" id="detail" aria-live="polite">
+        <div class="detail-empty">Выберите инцидент слева, чтобы увидеть разбор.</div>
+      </section>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="assets/config.js"></script>
+  <script src="assets/mock-data.js"></script>
+  <script src="assets/dashboard.js"></script>
+</body>
+</html>                                                               

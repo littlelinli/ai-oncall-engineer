@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kezekshi — AI-дежурный инженер</title>
+  <meta name="description" content="Kezekshi следит за вашим приложением в облаке, сам разбирает сбои с помощью AI и присылает готовый разбор в Telegram и на почту.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Kezekshi</span></a>
+      <nav class="nav" aria-label="Основное меню">
+        <a href="index.html" aria-current="page">Главная</a>
+        <a href="dashboard.html">Дашборд</a>
+        <a href="connect.html">Подключить сервер</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <div>
+          <h1>Сервер упал в 3 ночи. Разбор уже у вас в Telegram.</h1>
+          <p class="lead">Kezekshi следит за вашим приложением в облаке. Когда что-то ломается, он сам собирает логи и метрики, просит AI найти причину и присылает готовый разбор: что случилось, почему и что делать.</p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="dashboard.html">Открыть демо</a>
+            <a class="btn btn-ghost" href="connect.html">Подключить сервер</a>
+          </div>
+        </div>
+
+        <div class="pager" role="img" aria-label="Пример инцидента: в 03:12 выросли ошибки 500, в 03:13 AI нашёл причину и сервис перезапущен, в 03:14 команда получила сообщение">
+          <div class="pager-head"><span>demo-app · prod</span><span>Сегодня</span></div>
+          <div class="pager-row is-alert">
+            <span class="pager-time">03:12</span>
+            <div><strong>Ошибки 500 выросли до 38%</strong><span>Сработала тревога HTTP5xxRate</span></div>
+          </div>
+          <div class="pager-row">
+            <span class="pager-time">03:12</span>
+            <div><strong>Собраны логи и метрики</strong><span>15 минут до сбоя, 214 строк после фильтра</span></div>
+          </div>
+          <div class="pager-row is-ai">
+            <span class="pager-time">03:13</span>
+            <div><strong>Причина: закончились соединения с базой</strong><span>Пул заполнен, новые запросы ждут и падают по таймауту</span></div>
+          </div>
+          <div class="pager-row is-done">
+            <span class="pager-time">03:14</span>
+            <div><strong>Сервис перезапущен, ошибок нет</strong><span>Разбор отправлен на почту и в Telegram</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="wrap">
+        <h2>Как это работает</h2>
+        <p>Никто не сидит у мониторов. Вся цепочка запускается сама в момент сбоя и занимает около минуты.</p>
+        <ol class="steps">
+          <li>
+            <span class="step-n">1</span>
+            <h3>Замечает сбой</h3>
+            <p>Приложение и сервер отправляют логи и метрики в облако. Тревога срабатывает, когда растут ошибки, нагрузка или заполняется диск.</p>
+          </li>
+          <li>
+            <span class="step-n">2</span>
+            <h3>Разбирает причину</h3>
+            <p>Система берёт логи за минуты до сбоя, убирает лишнее и отправляет AI. В ответ приходит причина и план действий.</p>
+          </li>
+          <li>
+            <span class="step-n">3</span>
+            <h3>Сообщает и чинит</h3>
+            <p>Разбор приходит в Telegram и на почту и сохраняется в истории. Типовые проблемы, например зависший процесс, исправляются автоматически.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="who">
+      <div class="wrap split">
+        <div>
+          <h2>Для команд, у которых нет дежурного инженера ночью</h2>
+          <p style="color:var(--muted);margin:0;max-width:30em">Небольшие компании и стартапы в Казахстане часто держат приложение в облаке, но не могут позволить себе круглосуточную смену. Kezekshi закрывает эту дыру.</p>
+        </div>
+        <ul class="facts">
+          <li><b>Без лишних шагов</b><span>Агент ставится на сервер одной командой, разбор приходит туда, где команда уже общается.</span></li>
+          <li><b>Без потока писем</b><span>Повторные тревоги по одной поломке объединяются в один инцидент.</span></li>
+          <li><b>Безопасно</b><span>Автопочинка выполняет только заранее разрешённые действия и не чаще раза в полчаса.</span></li>
+          <li><b>Под контролем стоимости</b><span>В AI уходят только важные строки логов, а не всё подряд.</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="cta-band">
+      <div class="wrap">
+        <h2>Посмотрите, как выглядит разбор инцидента</h2>
+        <a class="btn btn-primary" href="dashboard.html">Открыть демо</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">Kezekshi · учебный проект по курсу Fundamentals of Cloud Technologies</div>
+  </footer>
+</body>
+</html>
