@@ -5,19 +5,24 @@
   const result = document.getElementById("result");
   const cmd = document.getElementById("install-cmd");
   const toast = document.getElementById("toast");
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const submitText = submitBtn.textContent;
+
+  const cfg = window.APP_CONFIG || {};
+  const REGISTER_URL = (cfg.REGISTER_URL || "").trim();
 
   function showToast(text) {
     toast.textContent = text;
     toast.hidden = false;
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => (toast.hidden = true), 3000);
+    showToast._t = setTimeout(() => (toast.hidden = true), 4000);
   }
 
-  function demoKey() {
-    const chars = "abcdefghijkmnpqrstuvwxyz23456789";
-    let k = "kz_demo_";
-    for (let i = 0; i < 24; i++) k += chars[Math.floor(Math.random() * chars.length)];
-    return k;
+  function showError(text) {
+    error.textContent = text;
+    error.hidden = false;
+    input.setAttribute("aria-invalid", "true");
+    input.focus();
   }
 
   input.addEventListener("input", () => {
@@ -25,22 +30,45 @@
     input.removeAttribute("aria-invalid");
   });
 
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = input.value.trim();
-    if (!/^[a-zA-Z0-9-]{3,40}$/.test(name)) {
-      error.hidden = false;
-      input.setAttribute("aria-invalid", "true");
-      input.focus();
+    // те же правила, что в /register и install.sh
+    if (!/^[A-Za-z0-9._-]{1,63}$/.test(name)) {
+      showError("Введите имя: латинские буквы, цифры, точка, _ и -, до 63 символов, без пробелов.");
       return;
     }
-    document.getElementById("result-name").textContent = name;
-    cmd.textContent =
-      "curl -fsSL https://get.kezekshi.kz/agent.sh | sudo bash -s -- \\\n" +
-      "  --server " + name + " \\\n" +
-      "  --cloud aws \\\n" +
-      "  --key " + demoKey();
-    result.hidden = false;
+    if (!REGISTER_URL) {
+      showError("Адрес /register не задан в assets/config.js (REGISTER_URL).");
+      return;
+    }
+
+    const cloudInput = form.querySelector('input[name="cloud"]:checked');
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Получаем команду…";
+    try {
+      const resp = await fetch(REGISTER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, cloud: cloudInput ? cloudInput.value : "aws" }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.command) {
+        showError(data.error || "Не удалось получить команду (код " + resp.status + "). Попробуйте ещё раз.");
+        return;
+      }
+      document.getElementById("result-name").textContent = data.name || name;
+      cmd.textContent = data.command;
+      result.hidden = false;
+      result.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (err) {
+      // сюда попадаем при ошибке сети или CORS
+      showError("Сервер регистрации недоступен. Проверьте интернет; если ошибка повторяется, нужно включить CORS в API Gateway.");
+      console.error("register failed", err);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = submitText;
+    }
   });
 
   document.getElementById("copy-btn").addEventListener("click", async () => {

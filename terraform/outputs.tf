@@ -68,3 +68,18 @@ output "servers_table_name" {
   description = "DynamoDB table with connected servers"
   value       = aws_dynamodb_table.servers.name
 }
+
+output "site_url" {
+  description = "Kezekshi website"
+  value       = "http://${aws_s3_bucket_website_configuration.site.website_endpoint}"
+}
+
+output "api_url" {
+  description = "API for the dashboard (GET /incidents)"
+  value       = aws_lambda_function_url.api.function_url
+}
+
+output "dataset_bucket" {
+  description = "Private bucket with the ShopSim dataset for ML"
+  value       = aws_s3_bucket.dataset.bucket
+}
