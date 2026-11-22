@@ -111,7 +111,7 @@ button, input, select { font: inherit; color: inherit; }
 .source-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .source-pill.is-live::before { background: var(--calm); }
 
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; margin-bottom: 24px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; margin-bottom: 24px; }
 .stat { padding: 20px; border-right: 1px solid var(--line); background: var(--night); }
 .stat:last-child { border-right: 0; }
 .stat-value { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
@@ -214,9 +214,6 @@ fieldset { border: 0; margin: 0 0 20px; padding: 0; }
 @media (max-width: 960px) {
   .hero .wrap, .split, .top-grid, .main-grid, .connect-grid { grid-template-columns: 1fr; }
   .hero { padding: 56px 0 48px; }
-  .stats { grid-template-columns: repeat(2, 1fr); }
-  .stat:nth-child(2) { border-right: 0; }
-  .stat:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
 }
 @media (max-width: 720px) {
   .wrap { padding: 0 16px; }
@@ -227,6 +224,9 @@ fieldset { border: 0; margin: 0 0 20px; padding: 0; }
   .nav a { padding: 8px; font-size: 14px; }
   .brand-name { display: none; }
   .break-grid { grid-template-columns: 1fr; }
+  .stat { padding: 16px 12px; }
+  .stat-value { font-size: 24px; }
+  .stat-label { font-size: 13px; }
 }
 
 .log-table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -281,4 +281,4 @@ fieldset { border: 0; margin: 0 0 20px; padding: 0; }
   height: 100%;
   background: var(--signal);
   border-radius: 3px;
-}ы
+}

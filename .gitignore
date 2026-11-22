@@ -14,3 +14,7 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+tfplan
+
+# Lambda zip built by Terraform
+terraform/build/

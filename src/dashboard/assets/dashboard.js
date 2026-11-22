@@ -109,7 +109,6 @@
     const weekAgo = Date.now() - 7 * 864e5;
     $("stat-open").textContent = list.filter((i) => i.status === "open").length;
     $("stat-week").textContent = list.filter((i) => new Date(i.started_at) >= weekAgo).length;
-    $("stat-fixed").textContent = list.filter((i) => i.auto_fix && i.auto_fix.applied).length;
     const done = list.filter((i) => i.resolved_at);
     if (done.length) {
       const avg = done.reduce((s, i) => s + (new Date(i.resolved_at) - new Date(i.started_at)), 0) / done.length;

@@ -12,7 +12,7 @@ echo "1/2 Lambda $FN"
 HANDLER=$(aws lambda get-function-configuration --function-name "$FN" --query Handler --output text)
 MODULE="${HANDLER%.*}"                      # например kezekshi_ingest или lambda_function
 [ "${HANDLER##*.}" = "lambda_handler" ] || { echo "Неожиданный handler: $HANDLER" >&2; exit 1; }
-cp "$ROOT/src/lambda/ingest/kezekshi_ingest.py" "$WORK/$MODULE.py"
+cp "$ROOT/src/lambda/ingest/lambda_function.py" "$WORK/$MODULE.py"
 (cd "$WORK" && zip -q fn.zip "$MODULE.py")
 aws lambda update-function-code --function-name "$FN" --zip-file "fileb://$WORK/fn.zip" >/dev/null
 aws lambda wait function-updated --function-name "$FN"

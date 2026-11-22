@@ -1,23 +1,4 @@
-# Мониторинг: лог-группа демо-приложения, метрика ошибок и правило EventBridge для всех алармов.
-# Положить рядом с main.tf. Переменные ниже можно переопределить в tfvars.
-
-variable "incident_lambda_arn" {
-  description = "ARN Lambda, которая разбирает инцидент и шлёт в Telegram"
-  type        = string
-  default     = "arn:aws:lambda:eu-north-1:788383723111:function:incident-analyzer"
-}
-
-variable "alarm_prefix" {
-  description = "Префикс имён алармов; правило EventBridge ловит только их"
-  type        = string
-  default     = "ai-oncall-engineer-"
-}
-
-# Лог-группа уже создана руками, поэтому импортируем её, а не создаём заново.
-import {
-  to = aws_cloudwatch_log_group.app
-  id = "/demoapp/app"
-}
+# Мониторинг демо-приложения: лог-группа, метрика ошибок, алармы и правило EventBridge.
 
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/demoapp/app"
@@ -40,15 +21,15 @@ resource "aws_cloudwatch_log_metric_filter" "app_errors" {
 
 # Алармы серверов (CPU, память, диск, ошибки, сервер пропал, приложение не отвечает,
 # медленные ответы, атака на логин, шквал логов) создаёт Lambda kezekshi-ingest
-# для каждого подключённого сервера, см. src/lambda/ingest/kezekshi_ingest.py.
-# Метрика DemoApp/AppErrors остаётся: её читает incident-analyzer для статистики.
+# для каждого подключённого сервера, включая демо (src/lambda/ingest/lambda_function.py).
+# Отдельные алармы демо-сервера через CloudWatch Agent убраны: они дублировали алармы агента.
+# Метрика DemoApp/AppErrors остаётся, её читает incident-analyzer для статистики.
 
 # Любой наш аларм перешёл в ALARM -> событие в Lambda
 resource "aws_cloudwatch_event_rule" "alarm_to_lambda" {
   name        = "${var.alarm_prefix}alarm-state-change"
   description = "Send ALARM and OK state changes of ai-oncall-engineer alarms to the incident Lambda"
 
-  # ALARM = инцидент начался, OK = починилось (Lambda закрывает инцидент в DynamoDB)
   event_pattern = jsonencode({
     source        = ["aws.cloudwatch"]
     "detail-type" = ["CloudWatch Alarm State Change"]
@@ -61,13 +42,13 @@ resource "aws_cloudwatch_event_rule" "alarm_to_lambda" {
 
 resource "aws_cloudwatch_event_target" "incident_lambda" {
   rule = aws_cloudwatch_event_rule.alarm_to_lambda.name
-  arn  = var.incident_lambda_arn
+  arn  = aws_lambda_function.incident_analyzer.arn
 }
 
 resource "aws_lambda_permission" "allow_eventbridge" {
   statement_id  = "AllowEventBridgeAlarmRule"
   action        = "lambda:InvokeFunction"
-  function_name = var.incident_lambda_arn
+  function_name = aws_lambda_function.incident_analyzer.arn
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.alarm_to_lambda.arn
 }
