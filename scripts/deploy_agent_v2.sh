@@ -1,5 +1,5 @@
 #!/bin/bash
-# Обновляет приём данных (Lambda kezekshi-ingest) и установщик агента в S3 до версии 2.
+# Обновляет приём данных (Lambda kezekshi-ingest) до версии 2. Установщик агента обновляет terraform apply.
 # Запускать в AWS CloudShell из корня репозитория:  bash scripts/deploy_agent_v2.sh
 set -euo pipefail
 export AWS_REGION=eu-north-1 AWS_DEFAULT_REGION=eu-north-1
@@ -18,16 +18,9 @@ aws lambda update-function-code --function-name "$FN" --zip-file "fileb://$WORK/
 aws lambda wait function-updated --function-name "$FN"
 echo "   код обновлён (handler $HANDLER)"
 
-echo "2/2 установщик агента в s3://$BUCKET"
-KEYS=$(aws s3 ls "s3://$BUCKET/" --recursive | awk '{print $4}' | grep 'install\.sh$' || true)
-[ -n "$KEYS" ] || KEYS=install.sh
-for k in $KEYS; do
-  aws s3 cp "$ROOT/src/agent/install.sh" "s3://$BUCKET/$k" --content-type text/x-sh --only-show-errors
-  echo "   обновлён $k"
-done
-for k in $(aws s3 ls "s3://$BUCKET/" --recursive | awk '{print $4}' | grep 'kezekshi_agent\.py$' || true); do
-  aws s3 cp "$ROOT/src/agent/kezekshi_agent.py" "s3://$BUCKET/$k" --only-show-errors
-  echo "   обновлён $k"
-done
+# Установщик агента в S3 обновляет Terraform (terraform/agent.tf): он же вписывает в него
+# адрес /ingest. Копировать install.sh в бакет руками нельзя: адрес останется пустым,
+# и новые агенты не будут отправлять данные.
+echo "2/2 установщик агента: terraform apply (terraform/agent.tf)"
 rm -rf "$WORK"
 echo "agent v2 deploy done"

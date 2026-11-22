@@ -108,3 +108,9 @@ variable "demo_server_id" {
   type        = string
   default     = ""
 }
+
+variable "site_bucket_name" {
+  description = "S3 bucket of the Kezekshi website (must be globally unique; change it on a new account)"
+  type        = string
+  default     = "kezekshi-dashboard-alikhan"
+}
