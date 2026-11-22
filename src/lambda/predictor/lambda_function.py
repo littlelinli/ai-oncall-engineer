@@ -31,6 +31,8 @@ SERVERS_TABLE = os.environ.get("SERVERS_TABLE", "incident-demo-servers")
 HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "7"))
 WARN_COOLDOWN = int(os.environ.get("WARN_COOLDOWN", "3600"))
 TTL_DAYS = int(os.environ.get("TTL_DAYS", "30"))
+LANGS = [x.strip() for x in os.environ.get("MESSAGE_LANGS", "ru,en").split(",") if x.strip() in ("ru", "en")] \
+    or ["ru"]
 
 CW = boto3.client("cloudwatch")
 DDB = boto3.resource("dynamodb")
@@ -107,35 +109,40 @@ def fetch_series(server_id, now_ts):
 # ---------------- риски ----------------
 
 def find_risks(fc):
-    """Правила поверх прогноза. Возвращает [(код, текст)]."""
+    """Правила поверх прогноза. Возвращает [(код, {"ru": текст, "en": текст})]."""
     risks = []
     cpu = fc.get("cpu")
     if cpu and cpu["now"] < 80:
         for h in model.HORIZONS:
             if cpu[f"f{h}"] > 80:
-                risks.append(("cpu_overload",
-                              f"CPU может превысить 80% примерно через {h} мин "
-                              f"(сейчас {cpu['now']:.0f}%, прогноз {cpu[f'f{h}']:.0f}%)"))
+                f = cpu[f"f{h}"]
+                risks.append(("cpu_overload", {
+                    "ru": f"CPU может превысить 80% примерно через {h} мин (сейчас {cpu['now']:.0f}%, прогноз {f:.0f}%)",
+                    "en": f"CPU may exceed 80% in about {h} min (now {cpu['now']:.0f}%, forecast {f:.0f}%)"}))
                 break
     mem = fc.get("mem")
     if mem and mem["now"] > 50 and mem["trend_per_hour"] > 0.5:
         eta = (95 - mem["now"]) / mem["trend_per_hour"]
         if 0 < eta < 3:
-            risks.append(("memory_leak",
-                          f"Память растёт на {mem['trend_per_hour']:.1f}% в час, похоже на утечку. "
-                          f"Закончится примерно через {eta * 60:.0f} мин (сейчас {mem['now']:.0f}%)"))
+            tr = mem["trend_per_hour"]
+            risks.append(("memory_leak", {
+                "ru": f"Память растёт на {tr:.1f}% в час, похоже на утечку. "
+                      f"Закончится примерно через {eta * 60:.0f} мин (сейчас {mem['now']:.0f}%)",
+                "en": f"Memory grows by {tr:.1f}% per hour, looks like a leak. "
+                      f"It runs out in about {eta * 60:.0f} min (now {mem['now']:.0f}%)"}))
     disk = fc.get("disk")
     if disk and disk["now"] > 60 and disk["trend_per_hour"] > 0.05:
         eta = (95 - disk["now"]) / disk["trend_per_hour"]
         if 0 < eta < 24:
-            risks.append(("disk_full",
-                          f"Диск заполняется на {disk['trend_per_hour']:.2f}% в час, "
-                          f"заполнится примерно через {eta:.1f} ч (сейчас {disk['now']:.0f}%)"))
+            tr = disk["trend_per_hour"]
+            risks.append(("disk_full", {
+                "ru": f"Диск заполняется на {tr:.2f}% в час, заполнится примерно через {eta:.1f} ч (сейчас {disk['now']:.0f}%)",
+                "en": f"Disk fills by {tr:.2f}% per hour, full in about {eta:.1f} h (now {disk['now']:.0f}%)"}))
     err = fc.get("errors")
     if err and err["now"] <= 5 and err["f30"] > 5:
-        risks.append(("errors_rising",
-                      f"Ошибок становится больше: прогноз {err['f30']:.0f} в минуту через 30 мин "
-                      f"(сейчас {err['now']:.0f})"))
+        risks.append(("errors_rising", {
+            "ru": f"Ошибок становится больше: прогноз {err['f30']:.0f} в минуту через 30 мин (сейчас {err['now']:.0f})",
+            "en": f"Errors are rising: forecast {err['f30']:.0f} per minute in 30 min (now {err['now']:.0f})"}))
     return risks
 
 
@@ -198,14 +205,18 @@ def handler(event, context):
                 "ts": datetime.fromtimestamp(now_ts, timezone.utc).isoformat(timespec="minutes"),
                 "model": model.MODEL_VERSION,
                 "forecast": to_ddb(fc),
-                "risks": [{"code": c, "text": t} for c, t in risks],
+                "risks": [{"code": c, "text": t["ru"], "text_en": t["en"]} for c, t in risks],
                 "expires_at": int(now_ts) + TTL_DAYS * 86400,
             })
             put_forecast_metrics(sid, fc, now_ts)
             for code, text in risks:
-                if should_warn(table, sid, code, now_ts, text):
-                    send_telegram(f"🔮 Прогноз: {names.get(sid, sid)}\n{text}\n"
-                                  f"Аларм ещё не сработал, это предупреждение заранее.")
+                if should_warn(table, sid, code, now_ts, text["ru"]):
+                    name = names.get(sid, sid)
+                    blocks = {
+                        "ru": f"🔮 Прогноз: {name}\n{text['ru']}\nАларм ещё не сработал, это предупреждение заранее.",
+                        "en": f"🔮 Forecast: {name}\n{text['en']}\nNo alarm yet, this is an early warning.",
+                    }
+                    send_telegram("\n\n— — —\n\n".join(blocks[l] for l in LANGS))
         except Exception as e:  # один сломанный сервер не должен мешать остальным
             print(f"server {sid}: {e!r}")
     print(json.dumps({"servers": len(result), "risks": {k: v["risks"] for k, v in result.items()}}))

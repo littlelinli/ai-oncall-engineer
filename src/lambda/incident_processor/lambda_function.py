@@ -30,6 +30,9 @@ SERVERS_NAMESPACE = os.environ.get("METRICS_NAMESPACE", "Kezekshi")
 PREDICTIONS_TABLE = os.environ.get("PREDICTIONS_TABLE", "kezekshi-predictions")
 DEMO_SERVER_ID = os.environ.get("DEMO_SERVER_ID", "")  # сервер агента на демо-EC2: на нём можно автопочинку
 GROUP_MINUTES = int(os.environ.get("GROUP_MINUTES", "15"))  # окно объединения алармов в один инцидент
+# языки сообщений по порядку: ru, en или оба через запятую
+LANGS = [x.strip() for x in os.environ.get("MESSAGE_LANGS", "ru,en").split(",") if x.strip() in ("ru", "en")] \
+    or ["ru"]
 ALLOWED_SEVERITY = {"low", "medium", "high", "critical"}
  
 logs_client = boto3.client("logs")
@@ -411,46 +414,74 @@ def fmt(v):
     return "нет данных" if v is None else f"{v}%"
  
  
-def stats_line(st):
+L = {
+    "ru": {"server": "Сервер", "cause": "Вероятная причина", "todo": "Что сделать", "mem": "Память",
+           "disk": "Диск", "errors": "Ошибок/мин", "latency": "Задержка p95", "nodata": "нет данных", "sec": "с",
+           "forecast": "🔮 ML-агент предупреждал об этом за {m} мин.",
+           "history": "📎 За неделю такое уже было {n} раз(а), последний раз {t} UTC.",
+           "worse": "Ухудшение на {server}", "cont": "Это продолжение инцидента «{title}»."},
+    "en": {"server": "Server", "cause": "Likely cause", "todo": "What to do", "mem": "Memory",
+           "disk": "Disk", "errors": "Errors/min", "latency": "Latency p95", "nodata": "n/a", "sec": "s",
+           "forecast": "🔮 The ML agent warned about this {m} min in advance.",
+           "history": "📎 This happened {n} time(s) in the last week, last time {t} UTC.",
+           "worse": "Getting worse on {server}", "cont": "This continues the incident \"{title}\"."},
+}
+
+
+def tr(inc, field, lang):
+    """Поле инцидента на нужном языке (английское с суффиксом _en, если есть)."""
+    if lang == "en" and inc.get(f"{field}_en"):
+        return inc[f"{field}_en"]
+    return inc[field]
+
+
+def stats_line(st, lang="ru"):
+    t = L[lang]
+    f = (lambda v: t["nodata"] if v is None else f"{v}%")
     errors = st.get("errors_per_min")
-    errors_text = "нет данных" if errors is None else int(errors)
-    parts = [f"CPU: {fmt(st.get('cpu'))}"]
+    parts = [f"CPU: {f(st.get('cpu'))}"]
     if "mem" in st:
-        parts.append(f"Память: {fmt(st.get('mem'))}")
-    parts += [f"Диск: {fmt(st.get('disk'))}", f"Ошибок/мин: {errors_text}"]
+        parts.append(f"{t['mem']}: {f(st.get('mem'))}")
+    parts += [f"{t['disk']}: {f(st.get('disk'))}",
+              f"{t['errors']}: {t['nodata'] if errors is None else int(errors)}"]
     if st.get("latency_ms") is not None:
-        parts.append(f"Задержка p95: {st['latency_ms'] / 1000:.1f} с")
+        parts.append(f"{t['latency']}: {st['latency_ms'] / 1000:.1f} {t['sec']}")
     return "  ".join(parts)
 
 
-def extra_lines(inc):
-    lines = []
+def extra_lines(inc, lang="ru"):
+    t, lines = L[lang], []
     fw = inc.get("forecast_warning")
     if fw:
-        lines.append(f"🔮 ML-агент предупреждал об этом за {fw['minutes_before']} мин.")
+        lines.append(t["forecast"].format(m=fw["minutes_before"]))
     hist = inc.get("history")
     if hist:
-        when = hist["last_time"][:16].replace("T", " ")
-        lines.append(f"📎 За неделю такое уже было {hist['count']} раз(а), последний раз {when} UTC.")
+        lines.append(t["history"].format(n=hist["count"], t=hist["last_time"][:16].replace("T", " ")))
     return lines
 
 
-def message_text(inc, icons=True):
+def message_text(inc, lang="ru", icons=True):
+    t = L[lang]
     icon = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(inc["severity"], "⚪")
-    steps = "\n".join(f"{i}) {x}" for i, x in enumerate(inc["recommendation_steps"], 1))
+    steps = "\n".join(f"{i}) {x}" for i, x in enumerate(tr(inc, "recommendation_steps", lang), 1))
     parts = [
-        f"{icon + ' ' if icons else ''}{inc['title']}",
-        f"Сервер: {inc['server']}",
-        stats_line(inc["stats"]),
+        f"{icon + ' ' if icons else ''}{tr(inc, 'title', lang)}",
+        f"{t['server']}: {inc['server']}",
+        stats_line(inc["stats"], lang),
         "",
-        f"Вероятная причина: {inc['root_cause']}",
+        f"{t['cause']}: {tr(inc, 'root_cause', lang)}",
         "",
-        f"Что сделать:\n{steps}",
+        f"{t['todo']}:\n{steps}",
     ]
-    extra = extra_lines(inc)
+    extra = extra_lines(inc, lang)
     if extra:
         parts += [""] + extra
     return "\n".join(parts)
+
+
+def all_languages(inc, icons=True):
+    """Сообщение на всех языках из MESSAGE_LANGS, блоки через разделитель."""
+    return "\n\n— — —\n\n".join(message_text(inc, lang, icons) for lang in LANGS)
 
 
 def telegram(text):
@@ -469,7 +500,7 @@ def telegram(text):
 
 
 def send_telegram(inc):
-    telegram(message_text(inc))
+    telegram(all_languages(inc))
 
 
 def send_sns(inc):
@@ -480,7 +511,7 @@ def send_sns(inc):
     boto3.client("sns").publish(
         TopicArn=topic_arn,
         Subject=f"[{inc['severity'].upper()}] {inc['title']}"[:100],
-        Message=message_text(inc, icons=False) + f"\n\nID: {inc['id']}",
+        Message=all_languages(inc, icons=False) + f"\n\nID: {inc['id']}",
     )
  
  
@@ -505,9 +536,13 @@ def attach_to_open(open_inc, incident):
             UpdateExpression=expr, ExpressionAttributeValues=values)
     if worse:
         icon = {"high": "🟠", "critical": "🔴"}.get(incident["severity"], "🟡")
-        telegram(f"{icon} Ухудшение на {incident['server']}: {incident['title']}\n"
-                 f"{incident['root_cause']}\n"
-                 f"Это продолжение инцидента «{open_inc.get('title', '')}».")
+        blocks = []
+        for lang in LANGS:
+            t = L[lang]
+            blocks.append(f"{icon} {t['worse'].format(server=incident['server'])}: {tr(incident, 'title', lang)}\n"
+                          f"{tr(incident, 'root_cause', lang)}\n"
+                          + t["cont"].format(title=tr(open_inc, "title", lang)))
+        telegram("\n\n— — —\n\n".join(blocks))
     print(json.dumps({"status": "grouped", "into": open_inc["incident_id"],
                       "alarm": incident["alarm_name"], "escalated": worse}, ensure_ascii=False))
     return {"status": "grouped", "id": open_inc["incident_id"], "escalated": worse}
@@ -576,6 +611,9 @@ def lambda_handler(event, context):
     }
     incident.update(sanitize(analysis))
     incident.update({
+        "title_en": analysis.get("title_en", ""),
+        "root_cause_en": analysis.get("root_cause_en", ""),
+        "recommendation_steps_en": analysis.get("recommendation_steps_en", [])[:4],
         "cause_code": analysis["cause_code"],
         "cause_source": analysis["cause_source"],
         "load_ratio": analysis.get("load_ratio"),
