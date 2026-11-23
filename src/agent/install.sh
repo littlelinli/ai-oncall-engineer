@@ -8,7 +8,7 @@
 #   (ключ, имя, адрес и логи берутся из /etc/kezekshi/agent.env)
 set -euo pipefail
 
-KEY=""; NAME="$(hostname)"; URL="${KEZEKSHI_DEFAULT_INGEST_URL:-}"; LOGS=""
+KEY=""; NAME="$(hostname)"; URL="${KEZEKSHI_DEFAULT_INGEST_URL:-}"; LOGS=""; HEALTH=""; UPGRADE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --key)  KEY="$2";  shift 2 ;;
@@ -25,7 +25,7 @@ done
 if [ "$(id -u)" -ne 0 ]; then echo "Запустите через sudo" >&2; exit 1; fi
 if [ "$UPGRADE" = 1 ]; then
   [ -f /etc/kezekshi/agent.env ] || { echo "Агент ещё не установлен, нужен --key" >&2; exit 1; }
-  old() { grep "^$1=" /etc/kezekshi/agent.env | head -1 | cut -d= -f2-; }
+  old() { grep "^$1=" /etc/kezekshi/agent.env | head -1 | cut -d= -f2- || true; }
   KEY="$(old KEZEKSHI_KEY)"; NAME="$(old KEZEKSHI_SERVER)"; URL="$(old KEZEKSHI_INGEST_URL)"
   LOGS="${LOGS:-$(old KEZEKSHI_LOG_FILES)}"; HEALTH="${HEALTH:-$(old KEZEKSHI_HEALTH_URL)}"
 fi
