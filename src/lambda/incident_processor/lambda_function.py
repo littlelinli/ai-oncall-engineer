@@ -619,7 +619,13 @@ def lambda_handler(event, context):
     # Если в тревоге несколько точек, берём пиковую, а не самую раннюю
     value = max(reason_data.get("recentDatapoints") or [0])
     if server_id:
-        server = server_name(detail["configuration"].get("description"), server_id)
+        # имя из таблицы серверов (его можно поменять), а не из описания аларма
+        try:
+            server = recipients.server_item(server_id).get("name") or ""
+        except Exception as e:
+            print(f"server name: {e!r}")
+            server = ""
+        server = server or server_name(detail["configuration"].get("description"), server_id)
         series = get_server_series(event["time"], server_id)
         stats = stats_from_series(series)
         # автопочинка только на демо-сервере, на серверах клиентов мы ничего не запускаем
