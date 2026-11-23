@@ -24,6 +24,24 @@ def _langs(value, default):
     return default
 
 
+def server_item(server_id, fields=("owner", "name")):
+    """Запись сервера из таблицы серверов (только нужные поля) или {}."""
+    table = os.environ.get("SERVERS_TABLE")
+    if not table or not server_id:
+        return {}
+    names = {f"#f{i}": f for i, f in enumerate(fields)}
+    kwargs = {"FilterExpression": Attr("server_id").eq(server_id),
+              "ProjectionExpression": ", ".join(names), "ExpressionAttributeNames": names}
+    t = _ddb.Table(table)
+    while True:
+        page = t.scan(**kwargs)
+        if page.get("Items"):
+            return page["Items"][0]
+        if "LastEvaluatedKey" not in page:
+            return {}
+        kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+
 def owner_of(server_id):
     table = os.environ.get("SERVERS_TABLE")
     if not table or not server_id:
