@@ -27,6 +27,8 @@ INTERVAL = float(os.environ.get("SIM_COLLECT_INTERVAL", "60"))
 CLEANUP_EVERY = float(os.environ.get("SIM_CLEANUP_EVERY", "3600"))
 UPLOAD_MAX_AGE = float(os.environ.get("SIM_UPLOAD_MAX_AGE", "21600"))  # 6 часов
 S3_BUCKET = os.environ.get("SIM_S3_BUCKET", "").strip()
+# папка в бакете: у каждого симулятора своя (shopsim, shopsim-office ...)
+S3_PREFIX = os.environ.get("SIM_S3_PREFIX", "shopsim").strip().strip("/") or "shopsim"
 DATASET_DIR = os.path.join(DATA_DIR, "dataset")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 LABELS_PATH = os.path.join(DATA_DIR, "labels.json")
@@ -216,10 +218,10 @@ def s3_sync_loop():
     while True:
         time.sleep(3600)
         for src, dst in ((DATASET_DIR, "dataset"),):
-            subprocess.run(["aws", "s3", "sync", src, f"s3://{S3_BUCKET}/shopsim/{dst}/", "--only-show-errors"])
+            subprocess.run(["aws", "s3", "sync", src, f"s3://{S3_BUCKET}/{S3_PREFIX}/{dst}/", "--only-show-errors"])
         events = os.path.join(DATA_DIR, "events.jsonl")
         if os.path.exists(events):
-            subprocess.run(["aws", "s3", "cp", events, f"s3://{S3_BUCKET}/shopsim/events.jsonl", "--only-show-errors"])
+            subprocess.run(["aws", "s3", "cp", events, f"s3://{S3_BUCKET}/{S3_PREFIX}/events.jsonl", "--only-show-errors"])
 
 
 # ---------------- главный цикл ----------------
