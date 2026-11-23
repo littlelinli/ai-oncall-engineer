@@ -339,7 +339,7 @@ FORECAST_RISK = {"cpu-high": "cpu_overload", "mem-high": "memory_leak",
                  "disk-high": "disk_full", "app-errors": "errors_rising"}
 
 
-def forecast_warning(server_id, alarm_type, alarm_time, max_hours=3):
+def forecast_warning(server_id, alarm_type, alarm_time, max_hours=1):
     """Предупреждал ли ML-агент об этой проблеме заранее: {"minutes_before", "text"} или None."""
     code = FORECAST_RISK.get(alarm_type)
     if not code or not server_id:
@@ -421,7 +421,7 @@ L = {
     "ru": {"server": "Сервер", "cause": "Вероятная причина", "todo": "Что сделать", "mem": "Память",
            "disk": "Диск", "errors": "Ошибок/мин", "latency": "Задержка p95", "nodata": "нет данных", "sec": "с",
            "forecast": "🔮 ML-агент предупреждал об этом за {m} мин.",
-           "history": "📎 За неделю такое уже было {n} раз(а), последний раз {t} UTC.",
+           "history": "📎 За неделю такое уже было: {n}, последний раз {t} UTC.",
            "worse": "Ухудшение на {server}", "cont": "Это продолжение инцидента «{title}»."},
     "en": {"server": "Server", "cause": "Likely cause", "todo": "What to do", "mem": "Memory",
            "disk": "Disk", "errors": "Errors/min", "latency": "Latency p95", "nodata": "n/a", "sec": "s",
@@ -572,7 +572,9 @@ def attach_to_open(open_inc, incident):
     related = {"alarm_name": incident["alarm_name"], "alarm_type": incident["alarm_type"],
                "title": incident["title"], "severity": incident["severity"],
                "timestamp": incident["timestamp"]}
-    worse = SEVERITY_RANK.get(incident["severity"], 1) > SEVERITY_RANK.get(open_inc.get("severity"), 1)
+    worse = (SEVERITY_RANK.get(incident["severity"], 1) > SEVERITY_RANK.get(open_inc.get("severity"), 1)
+             or (incident.get("alarm_type") in ("app-down", "server-down")
+                 and incident.get("alarm_type") != open_inc.get("alarm_type")))
     if table_name:
         expr = "SET related_alarms = list_append(if_not_exists(related_alarms, :empty), :r)"
         values = {":r": [related], ":empty": []}
