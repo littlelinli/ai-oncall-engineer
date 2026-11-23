@@ -194,14 +194,29 @@ def should_warn(table, server_id, code, now_ts, text=""):
     return True
 
 
-def send_telegram(text, chat_id):
+SITE_BUTTON = {"ru": "📈 Сервер на сайте", "en": "📈 Server on the website", "both": "📈 Сервер на сайте / Website"}
+
+
+def site_button(langs):
+    site = os.environ.get("SITE_URL", "").rstrip("/")
+    if not site:
+        return None
+    key = langs[0] if len(langs) == 1 else "both"
+    return {"inline_keyboard": [[{"text": SITE_BUTTON.get(key, SITE_BUTTON["both"]),
+                                  "url": f"{site}/dashboard.html"}]]}
+
+
+def send_telegram(text, chat_id, buttons=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token or not chat_id:
         print("Telegram не настроен, пропускаю")
         return
+    body = {"chat_id": chat_id, "text": text}
+    if buttons:
+        body["reply_markup"] = buttons
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        data=json.dumps({"chat_id": chat_id, "text": text}).encode(),
+        data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"})
     urllib.request.urlopen(req, timeout=10).read()
 
@@ -257,7 +272,8 @@ def handler(event, context):
                     # владельцу сервера на его языке и/или в чат команды (см. recipients.py)
                     for chat_id, langs in recipients.telegram_targets(sid, LANGS):
                         try:
-                            send_telegram("\n\n— — —\n\n".join(blocks[l] for l in langs), chat_id)
+                            send_telegram("\n\n— — —\n\n".join(blocks[l] for l in langs), chat_id,
+                                          site_button(langs))
                         except Exception as e:
                             print(f"telegram {chat_id}: {e}")
         except Exception as e:  # один сломанный сервер не должен мешать остальным

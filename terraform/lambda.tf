@@ -148,6 +148,7 @@ resource "aws_lambda_function" "incident_analyzer" {
       USER_ALERTS_TOPIC_ARN = aws_sns_topic.user_alerts.arn
       ML_FUNCTION           = aws_lambda_function.ml.function_name
       LLM_FUNCTION          = aws_lambda_function.llm.function_name
+      SITE_URL              = "https://${aws_cloudfront_distribution.site.domain_name}"
     }
   }
 
