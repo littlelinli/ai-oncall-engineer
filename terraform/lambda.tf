@@ -63,6 +63,13 @@ data "aws_iam_policy_document" "incident_analyzer" {
     resources = [aws_dynamodb_table.incidents.arn]
   }
 
+  # Cause classifier (neural network, ml.tf)
+  statement {
+    sid       = "MlCause"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.ml.arn]
+  }
+
   # Who gets the message: owner of the server and his Telegram chat (recipients.py)
   statement {
     sid       = "FindOwner"
@@ -139,6 +146,7 @@ resource "aws_lambda_function" "incident_analyzer" {
       SERVERS_TABLE         = aws_dynamodb_table.servers.name
       USERS_TABLE           = aws_dynamodb_table.users.name
       USER_ALERTS_TOPIC_ARN = aws_sns_topic.user_alerts.arn
+      ML_FUNCTION           = aws_lambda_function.ml.function_name
     }
   }
 
