@@ -263,6 +263,7 @@ SCENARIOS = {
     "cleanup_broken": 1,
     "bot_attack": 2,
     "cpu_hog": 2,
+    "app_down": 1,
 }
 
 
@@ -292,11 +293,16 @@ def plan(name):
     if name == "cpu_hog":
         pct = rnd.randint(85, 100) if strong else rnd.randint(30, 55)
         return rnd.uniform(600, 2400), {"cpu_hog_pct": pct}, sev
+    if name == "app_down":
+        # приложение «упало» и само поднимается: лёгкий случай 1–2 минуты (аларм может не успеть), сильный 3–8
+        duration = rnd.uniform(180, 480) if strong else rnd.uniform(60, 120)
+        return duration, {"app_down_until": round(time.time() + duration / SPEED, 1)}, sev
     raise ValueError(name)
 
 
 RESET = {"payment_latency": 0.15, "checkout_error_rate": 0.0, "search_error_rate": 0.0,
-         "leak_mb_per_min": 0.0, "log_storm": 0, "uploads_cleanup": True, "cpu_hog_pct": 0}
+         "leak_mb_per_min": 0.0, "log_storm": 0, "uploads_cleanup": True, "cpu_hog_pct": 0,
+         "app_down_until": 0}
 
 
 def incident_loop():

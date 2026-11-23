@@ -6,7 +6,7 @@
 и сыпать ошибками, а при обычной нагрузке работает спокойно.
 
 Сценарии проблем включает генератор трафика через /sim/state (с токеном).
-Старые ручки /break/500, /break/cpu, /break/disk и /fix оставлены как были.
+Ручки /break/500, /break/cpu, /break/disk, /break/down (приложение «падает» на 3 минуты) и /fix.
 
 Каждый запрос пишется JSON-строкой в LOG_PATH: его читают CloudWatch Agent,
 агент Kezekshi и collector.py (датасет для ML).
@@ -52,6 +52,7 @@ DEFAULT_STATE = {
     "uploads_cleanup": True,     # работает ли очистка старых загрузок
     "cpu_hog_pct": 0,            # фоновая задача грузит CPU на N% (делает collector)
     "errors_until": 0,           # старая ручка /break/500
+    "app_down_until": 0,         # до этого момента (unix-время) приложение «упало»: всё отвечает 503
 }
 
 app = Flask(__name__)
@@ -176,6 +177,11 @@ def before():
     if g.queue_ms > QUEUE_TIMEOUT * 1000 and request.path != "/health":
         g.msg = "request timed out in queue, server overloaded"
         return jsonify(error="server overloaded"), 503
+    # Сценарий app_down: воркеры приложения упали, отвечает только заглушка с 503,
+    # в том числе на /health (агент видит, что приложение не отвечает). Управление работает.
+    if request.path not in ("/sim/state", "/fix") and time.time() < float(load_state().get("app_down_until") or 0):
+        g.msg = "service unavailable: application workers crashed, waiting for restart"
+        return jsonify(error="service unavailable"), 503
 
 
 @app.after_request
@@ -400,6 +406,15 @@ def break_disk():
         with open(FILL_PATH, "wb") as f:
             os.posix_fallocate(f.fileno(), 0, size)
     log("WARN", "break started", kind="disk", used_percent=disk_percent())
+    return jsonify(ok=True)
+
+
+@app.route("/break/down", methods=["POST"])
+@require_token
+def break_down():
+    """Приложение «падает» на 3 минуты: всё, кроме /fix и /sim/state, отвечает 503."""
+    save_state({"app_down_until": time.time() + 180})
+    log("WARN", "break started", kind="down", seconds=180)
     return jsonify(ok=True)
 
 
