@@ -1,0 +1,27 @@
+{
+  "version": "test-naive-1",
+  "window": 120,
+  "features": [
+    "cpu",
+    "mem",
+    "disk",
+    "errors"
+  ],
+  "horizons": [
+    15,
+    30,
+    60
+  ],
+  "mean": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "std": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ]
+}

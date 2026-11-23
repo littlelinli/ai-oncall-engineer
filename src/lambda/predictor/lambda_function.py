@@ -32,6 +32,8 @@ SERVERS_TABLE = os.environ.get("SERVERS_TABLE", "incident-demo-servers")
 HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "7"))
 WARN_COOLDOWN = int(os.environ.get("WARN_COOLDOWN", "3600"))
 TTL_DAYS = int(os.environ.get("TTL_DAYS", "30"))
+ML_FUNCTION = os.environ.get("ML_FUNCTION", "")
+LAMBDA = boto3.client("lambda") if ML_FUNCTION else None
 LANGS = [x.strip() for x in os.environ.get("MESSAGE_LANGS", "ru,en").split(",") if x.strip() in ("ru", "en")] \
     or ["ru"]
 
@@ -105,6 +107,34 @@ def fetch_series(server_id, now_ts):
         for kind in s:
             s[kind].sort()
     return series
+
+
+# ---------------- нейросеть (kezekshi-ml) ----------------
+
+def ml_forecast(series):
+    """Прогноз нейросети из Lambda kezekshi-ml или None (нет модели, ошибка, не настроено)."""
+    if not ML_FUNCTION:
+        return None
+    payload = {"task": "forecast", "series": {k: [[t, v] for t, v in s["recent"][-240:]] for k, s in series.items()}}
+    try:
+        resp = LAMBDA.invoke(FunctionName=ML_FUNCTION, Payload=json.dumps(payload).encode())
+        out = json.loads(resp["Payload"].read())
+    except Exception as e:
+        print(f"ml forecast: {e!r}")
+        return None
+    return out if out.get("available") else None
+
+
+def merge_ml(fc, ml, series):
+    """Подставляет прогноз нейросети в метрики, по которым у сервера есть свежие данные.
+    Тестовые модели (версия test-...) рабочий прогноз не меняют."""
+    if not ml or str(ml.get("version", "")).startswith("test-"):
+        return fc
+    for k, vals in (ml.get("forecast") or {}).items():
+        if k in fc and len(series.get(k, {}).get("recent") or []) >= 5:
+            fc[k].update({h: vals[h] for h in ("f15", "f30", "f60") if h in vals})
+            fc[k]["method"] = f"ml:{ml.get('version')}"
+    return fc
 
 
 # ---------------- риски ----------------
@@ -193,18 +223,26 @@ def handler(event, context):
     result = {}
     for sid in list_servers():
         try:
-            fc = model.forecast(fetch_series(sid, now_ts), now_ts)
+            series = fetch_series(sid, now_ts)
+            fc = model.forecast(series, now_ts)
             if not fc:
                 continue
+            baseline = json.loads(json.dumps(fc))       # копия: для сравнения моделей в дипломе
+            ml = ml_forecast(series)
+            fc = merge_ml(fc, ml, series)
             risks = find_risks(fc)
-            result[sid] = {"forecast": fc, "risks": [c for c, _ in risks]}
+            result[sid] = {"forecast": fc, "risks": [c for c, _ in risks],
+                           "ml": (ml or {}).get("version")}
             if dry:
                 continue
             table.put_item(Item={
                 "server_id": sid,
                 "ts": datetime.fromtimestamp(now_ts, timezone.utc).isoformat(timespec="minutes"),
-                "model": model.MODEL_VERSION,
+                "model": (ml or {}).get("version") if fc != baseline else model.MODEL_VERSION,
                 "forecast": to_ddb(fc),
+                "forecast_baseline": to_ddb(baseline),
+                "forecast_ml": to_ddb((ml or {}).get("forecast") or {}),
+                "ml_version": (ml or {}).get("version") or "",
                 "risks": [{"code": c, "text": t["ru"], "text_en": t["en"]} for c, t in risks],
                 "expires_at": int(now_ts) + TTL_DAYS * 86400,
             })

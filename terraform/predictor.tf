@@ -53,6 +53,11 @@ data "aws_iam_policy_document" "predictor" {
     actions   = ["dynamodb:Scan"]
     resources = [aws_dynamodb_table.servers.arn]
   }
+  # neural network forecast (ml.tf)
+  statement {
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.ml.arn]
+  }
   # owner's Telegram chat (recipients.py)
   statement {
     actions   = ["dynamodb:GetItem"]
@@ -90,6 +95,7 @@ resource "aws_lambda_function" "predictor" {
       TELEGRAM_BOT_TOKEN = var.telegram_bot_token
       TELEGRAM_CHAT_ID   = var.telegram_chat_id
       USERS_TABLE        = aws_dynamodb_table.users.name
+      ML_FUNCTION        = aws_lambda_function.ml.function_name
     }
   }
 

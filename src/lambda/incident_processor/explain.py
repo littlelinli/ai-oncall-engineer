@@ -11,6 +11,8 @@
    смотрим тренд и что пишут логи.
 Все цифры в тексте берутся из метрик, поэтому текст не может «выдумать» факт.
 """
+import json
+import os
 from statistics import median
 
 RULES_VERSION = "rules-v1"
@@ -119,12 +121,45 @@ def log_insight(log_summary):
 
 # ---------------- ML-классификатор (сюда встанет модель Алихана) ----------------
 
+CAUSE_TEXT = {
+    # код причины от классификатора -> объяснение для сообщения
+    "payment_slow": T("Классификатор: медленно отвечает внешний сервис (оплата).",
+                      "Classifier: an external service (payments) is slow."),
+    "bad_deploy": T("Классификатор: похоже на неудачное обновление приложения.",
+                    "Classifier: this looks like a bad application deploy."),
+    "memory_leak": T("Классификатор: утечка памяти в приложении.", "Classifier: a memory leak in the application."),
+    "log_storm": T("Классификатор: шквал логов, включён подробный режим.", "Classifier: a log flood, verbose logging is on."),
+    "cleanup_broken": T("Классификатор: не работает очистка файлов, диск заполняется.",
+                        "Classifier: file cleanup is broken, the disk is filling up."),
+    "bot_attack": T("Классификатор: атака ботов (перебор паролей, сканирование).",
+                    "Classifier: a bot attack (password guessing, scanning)."),
+    "cpu_hog": T("Классификатор: процессор загружает фоновая задача.", "Classifier: a background job is using the CPU."),
+    "app_down": T("Классификатор: приложение упало.", "Classifier: the application is down."),
+    "traffic_surge": T("Классификатор: наплыв посетителей.", "Classifier: a traffic surge."),
+}
+
+
 def ml_cause(alarm, series, now_ts):
-    """Модель определения причины. Пока не подключена: возвращает None,
-    и работают правила ниже. Когда модель будет готова, она должна вернуть
-    {"cause": код, "probability": 0..1, "explanation": {"ru": ..., "en": ...}};
-    ответ берётся, только если probability >= 0.6."""
-    return None
+    """Причина от нейросети (Lambda kezekshi-ml, модель cause.onnx) или None:
+    модели нет, функция не настроена, ошибка. Ответ берётся, если probability >= 0.6."""
+    fn = os.environ.get("ML_FUNCTION")
+    if not fn:
+        return None
+    try:
+        import boto3  # здесь, чтобы explain.py можно было проверять без AWS
+        payload = {"task": "cause", "series": {k: [[t, v] for t, v in pts[-60:]] for k, pts in series.items()}}
+        resp = boto3.client("lambda").invoke(FunctionName=fn, Payload=json.dumps(payload).encode())
+        out = json.loads(resp["Payload"].read())
+    except Exception as e:
+        print(f"ml cause: {e!r}")
+        return None
+    if not out.get("available") or str(out.get("version", "")).startswith("test-"):
+        return None
+    text = CAUSE_TEXT.get(out["cause"])
+    if out["cause"] == "none" or not text:
+        return None
+    return {"cause": out["cause"], "probability": out.get("probability", 0), "explanation": text,
+            "version": out.get("version")}
 
 
 # ---------------- правила по типам алармов ----------------
@@ -398,6 +433,7 @@ def explain(alarm_name, value, threshold, series, log_summary, now_ts):
             r["root_cause"] = ml["explanation"]
         r["cause_source"] = "ml"
         r["cause_probability"] = ml["probability"]
+        r["cause_model"] = ml.get("version")
     else:
         r["cause_source"] = RULES_VERSION
 
