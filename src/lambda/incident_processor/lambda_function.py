@@ -282,6 +282,8 @@ def resolve_incidents(alarm_name, ok_time):
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={":r": "resolved", ":t": ok_time, ":b": by},
         )
+        if it.get("title"):  # старые записи без текста не трогаем
+            notify_resolved(it, ok_time)
     return {"resolved": len(items), "alarm": alarm_name}
  
  
@@ -509,20 +511,58 @@ def send_telegram(inc):
 
 
 def send_sns(inc):
-    """Почта команды (SNS): только для серверов без владельца, как и общий чат."""
+    """Почта. Сервер с владельцем: письмо владельцу, если он включил почту на сайте
+    (тема SNS USER_ALERTS_TOPIC_ARN, подписка с фильтром по owner). Без владельца: почта команды."""
+    try:
+        owner, user = recipients.owner_profile(inc.get("server_id"))
+    except Exception as e:
+        print(f"owner lookup: {e!r}")
+        owner, user = None, {}
+    subject_lang = "en" if recipients.langs_of(user, LANGS) == ["en"] else "ru"
+    subject = f"[{inc['severity'].upper()}] {tr(inc, 'title', subject_lang)}"[:100]
+    if owner:
+        topic = os.environ.get("USER_ALERTS_TOPIC_ARN")
+        if topic and user.get("email_alerts"):
+            boto3.client("sns").publish(
+                TopicArn=topic, Subject=subject,
+                Message=all_languages(inc, icons=False, langs=recipients.langs_of(user, LANGS)) + f"\n\nID: {inc['id']}",
+                MessageAttributes={"owner": {"DataType": "String", "StringValue": owner}})
+        if os.environ.get("NOTIFY_TEAM_ALL", "false").lower() != "true":
+            return
     topic_arn = os.environ.get("SNS_TOPIC_ARN")
     if not topic_arn:
         print("SNS_TOPIC_ARN не задан, пропускаю")
         return
-    if recipients.owner_of(inc.get("server_id")) and os.environ.get("NOTIFY_TEAM_ALL", "false").lower() != "true":
-        return
     boto3.client("sns").publish(
-        TopicArn=topic_arn,
-        Subject=f"[{inc['severity'].upper()}] {inc['title']}"[:100],
+        TopicArn=topic_arn, Subject=subject,
         Message=all_languages(inc, icons=False) + f"\n\nID: {inc['id']}",
     )
- 
- 
+
+
+RESOLVED = {
+    "ru": "✅ Решено: {title}\nСервер: {server}\nДлилось: {minutes} мин.",
+    "en": "✅ Resolved: {title}\nServer: {server}\nLasted: {minutes} min.",
+}
+
+
+def notify_resolved(inc, ok_time):
+    """Короткое сообщение в Telegram, что инцидент закрылся (аларм вернулся в OK)."""
+    try:
+        start = datetime.fromisoformat(str(inc["timestamp"]).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(ok_time.replace("Z", "+00:00"))
+        minutes = max(1, round((end - start).total_seconds() / 60))
+    except Exception:
+        minutes = "?"
+    for chat_id, langs in recipients.telegram_targets(inc.get("server_id"), LANGS):
+        text = "\n\n— — —\n\n".join(
+            RESOLVED[lang].format(title=tr(inc, "title", lang), server=inc.get("server", ""), minutes=minutes)
+            for lang in langs)
+        try:
+            telegram(text, chat_id)
+        except Exception as e:
+            print(f"telegram {chat_id}: {e}")
+
+
 # ---------- Основная функция ----------
  
 def attach_to_open(open_inc, incident):

@@ -175,6 +175,8 @@
     try {
       const me = await A.call("/me");
       $("lang-select").value = me.lang || "both";
+      $("email-toggle").checked = Boolean(me.email_alerts);
+      $("email-status").textContent = me.email_status === "pending" ? "(подтвердите письмо от AWS)" : "";
       const btn = $("tg-btn");
       btn.dataset.linked = me.telegram_linked ? "1" : "";
       btn.textContent = me.telegram_linked ? "Отключить Telegram" : "Подключить Telegram";
@@ -199,6 +201,16 @@
         setTimeout(loadProfile, 20000);
       } catch (err) {
         toast("Telegram: " + err.message);
+      }
+    });
+    $("email-toggle").addEventListener("change", async (e) => {
+      try {
+        const me = await A.call("/me", { method: "PATCH", body: JSON.stringify({ email_alerts: e.target.checked }) });
+        $("email-status").textContent = me.email_status === "pending" ? "(подтвердите письмо от AWS)" : "";
+        toast(e.target.checked ? "Проверьте почту: AWS пришлёт письмо «Confirm subscription», нажмите ссылку в нём." : "Письма отключены");
+      } catch (err) {
+        e.target.checked = !e.target.checked;
+        toast("Не удалось сохранить: " + err.message);
       }
     });
     $("lang-select").addEventListener("change", async (e) => {

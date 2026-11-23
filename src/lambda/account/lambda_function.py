@@ -2,7 +2,8 @@
 его проверяет API Gateway). Пользователь = claim "sub", почта = claim "email".
 
   GET    /me                          профиль: почта, язык, подключён ли Telegram, сколько серверов
-  PATCH  /me                          {"lang": "ru" | "en" | "both"} язык уведомлений
+  PATCH  /me                          {"lang": "ru" | "en" | "both", "email_alerts": true | false}
+                                      почта: при включении AWS присылает письмо «Confirm subscription»
   GET    /me/servers                  мои серверы + последний прогноз ML-агента
   DELETE /me/servers/{id}             отключить сервер (запись и его алармы удаляются)
   GET    /me/servers/{id}/metrics     ряды метрик и прогноза за ?hours=6 (для графиков)
@@ -23,6 +24,8 @@ from boto3.dynamodb.conditions import Attr, Key
 
 DDB = boto3.resource("dynamodb")
 CW = boto3.client("cloudwatch")
+SNS = boto3.client("sns")
+USER_ALERTS_TOPIC = os.environ.get("USER_ALERTS_TOPIC_ARN", "")
 SERVERS = DDB.Table(os.environ["SERVERS_TABLE"])
 USERS = DDB.Table(os.environ["USERS_TABLE"])
 INCIDENTS = DDB.Table(os.environ["INCIDENTS_TABLE"])
@@ -92,27 +95,72 @@ def bot_username():
 
 # ---------------- маршруты ----------------
 
+def email_state(user):
+    """off | pending (ждём, пока подтвердит письмо) | on."""
+    arn = user.get("email_sub_arn")
+    if not user.get("email_alerts") or not arn:
+        return "off"
+    try:
+        attrs = SNS.get_subscription_attributes(SubscriptionArn=arn)["Attributes"]
+        return "pending" if attrs.get("PendingConfirmation") == "true" else "on"
+    except Exception as e:  # подписку удалили или не подтвердили за 3 дня
+        print(f"subscription {arn}: {e!r}")
+        return "off"
+
+
 def get_me(user_id, email):
     user = USERS.get_item(Key={"user_id": user_id}).get("Item") or {}
     if not user:
         user = {"user_id": user_id, "email": email, "lang": "both",
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         USERS.put_item(Item=user)
+    state = email_state(user)
     return response(200, {
         "email": user.get("email", email),
         "lang": user.get("lang", "both"),
         "telegram_linked": bool(user.get("telegram_chat_id")),
+        "email_alerts": state != "off",
+        "email_status": state,
         "servers": len(my_servers(user_id)),
     })
 
 
+def set_email_alerts(user_id, email, on):
+    user = USERS.get_item(Key={"user_id": user_id}).get("Item") or {}
+    arn = user.get("email_sub_arn")
+    if on:
+        if not USER_ALERTS_TOPIC:
+            raise RuntimeError("USER_ALERTS_TOPIC_ARN не задан")
+        if not (user.get("email_alerts") and arn and email_state(user) != "off"):
+            arn = SNS.subscribe(
+                TopicArn=USER_ALERTS_TOPIC, Protocol="email", Endpoint=email,
+                Attributes={"FilterPolicy": json.dumps({"owner": [user_id]})},
+                ReturnSubscriptionArn=True)["SubscriptionArn"]
+        USERS.update_item(Key={"user_id": user_id}, UpdateExpression="SET email_alerts = :t, email_sub_arn = :a, email = :e",
+                          ExpressionAttributeValues={":t": True, ":a": arn, ":e": email})
+    else:
+        if arn:
+            try:
+                SNS.unsubscribe(SubscriptionArn=arn)
+            except Exception as e:
+                print(f"unsubscribe {arn}: {e!r}")
+        USERS.update_item(Key={"user_id": user_id}, UpdateExpression="SET email_alerts = :f REMOVE email_sub_arn",
+                          ExpressionAttributeValues={":f": False})
+
+
 def patch_me(user_id, email, body):
-    lang = body.get("lang")
-    if lang not in LANGS:
-        return response(400, {"error": "lang: ru, en или both"})
-    USERS.update_item(Key={"user_id": user_id}, UpdateExpression="SET lang = :l, email = :e",
-                      ExpressionAttributeValues={":l": lang, ":e": email})
-    return response(200, {"lang": lang})
+    if "lang" not in body and "email_alerts" not in body:
+        return response(400, {"error": "lang или email_alerts"})
+    if "lang" in body:
+        if body["lang"] not in LANGS:
+            return response(400, {"error": "lang: ru, en или both"})
+        USERS.update_item(Key={"user_id": user_id}, UpdateExpression="SET lang = :l, email = :e",
+                          ExpressionAttributeValues={":l": body["lang"], ":e": email})
+    if "email_alerts" in body:
+        if not isinstance(body["email_alerts"], bool):
+            return response(400, {"error": "email_alerts: true или false"})
+        set_email_alerts(user_id, email, body["email_alerts"])
+    return get_me(user_id, email)
 
 
 def latest_forecast(server_id):
