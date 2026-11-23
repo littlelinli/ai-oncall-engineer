@@ -8,7 +8,7 @@
 #   (ключ, имя, адрес и логи берутся из /etc/kezekshi/agent.env)
 set -euo pipefail
 
-KEY=""; NAME="$(hostname)"; URL="${KEZEKSHI_DEFAULT_INGEST_URL:-}"; LOGS=""
+KEY=""; NAME="$(hostname)"; URL="${KEZEKSHI_DEFAULT_INGEST_URL:-}"; LOGS=""; HEALTH=""; UPGRADE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --key)  KEY="$2";  shift 2 ;;
