@@ -518,12 +518,28 @@ def all_languages(inc, icons=True, langs=None):
     return "\n\n— — —\n\n".join(message_text(inc, lang, icons) for lang in (langs or LANGS))
 
 
-def telegram(text, chat_id):
+SITE_BUTTON = {"ru": "🔎 Разбор на сайте", "en": "🔎 Details on the website", "both": "🔎 Разбор на сайте / Details"}
+
+
+def site_button(inc_id, langs):
+    """Кнопка под сообщением: открыть этот инцидент на дашборде (если сайт известен)."""
+    site = os.environ.get("SITE_URL", "").rstrip("/")
+    if not site:
+        return None
+    key = langs[0] if len(langs) == 1 else "both"
+    return {"inline_keyboard": [[{"text": SITE_BUTTON.get(key, SITE_BUTTON["both"]),
+                                  "url": f"{site}/dashboard.html#{inc_id}"}]]}
+
+
+def telegram(text, chat_id, buttons=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token or not chat_id:
         print("Telegram не настроен, пропускаю")
         return
-    data = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
+    body = {"chat_id": chat_id, "text": text}
+    if buttons:
+        body["reply_markup"] = buttons
+    data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage",
         data=data,
@@ -536,7 +552,7 @@ def send_telegram(inc):
     """Владельцу сервера на его языке и/или в чат команды (см. recipients.py)."""
     for chat_id, langs in recipients.telegram_targets(inc.get("server_id"), LANGS):
         try:
-            telegram(all_languages(inc, langs=langs), chat_id)
+            telegram(all_languages(inc, langs=langs), chat_id, site_button(inc["id"], langs))
         except Exception as e:
             print(f"telegram {chat_id}: {e}")
 
@@ -589,7 +605,7 @@ def notify_resolved(inc, ok_time):
             RESOLVED[lang].format(title=tr(inc, "title", lang), server=inc.get("server", ""), minutes=minutes)
             for lang in langs)
         try:
-            telegram(text, chat_id)
+            telegram(text, chat_id, site_button(inc.get("incident_id") or inc.get("id"), langs))
         except Exception as e:
             print(f"telegram {chat_id}: {e}")
 
@@ -625,7 +641,7 @@ def attach_to_open(open_inc, incident):
                               f"{tr(incident, 'root_cause', lang)}\n"
                               + t["cont"].format(title=tr(open_inc, "title", lang)))
             try:
-                telegram("\n\n— — —\n\n".join(blocks), chat_id)
+                telegram("\n\n— — —\n\n".join(blocks), chat_id, site_button(open_inc["incident_id"], langs))
             except Exception as e:
                 print(f"telegram {chat_id}: {e}")
     print(json.dumps({"status": "grouped", "into": open_inc["incident_id"],

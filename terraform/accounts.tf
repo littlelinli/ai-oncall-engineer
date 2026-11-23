@@ -302,6 +302,7 @@ resource "aws_lambda_function" "telegram" {
       SERVERS_TABLE      = aws_dynamodb_table.servers.name
       TELEGRAM_BOT_TOKEN = var.telegram_bot_token
       WEBHOOK_SECRET     = local.telegram_webhook_secret
+      SITE_URL           = "https://${aws_cloudfront_distribution.site.domain_name}"
     }
   }
 
@@ -329,16 +330,40 @@ resource "aws_lambda_permission" "telegram_api" {
   source_arn    = "${aws_apigatewayv2_api.servers.execution_arn}/*/*/telegram/*"
 }
 
-# Говорим Telegram, куда слать сообщения боту. Запускается заново, если поменялся адрес.
+# Говорим Telegram, куда слать сообщения боту, и задаём меню команд (кнопка «Меню» в чате).
+# Запускается заново, если поменялся адрес или список команд.
+locals {
+  telegram_commands = {
+    ru = [
+      { command = "servers", description = "Мои серверы" },
+      { command = "lang", description = "Язык уведомлений" },
+      { command = "stop", description = "Отключить уведомления" },
+      { command = "help", description = "Помощь" },
+    ]
+    en = [
+      { command = "servers", description = "My servers" },
+      { command = "lang", description = "Notification language" },
+      { command = "stop", description = "Turn notifications off" },
+      { command = "help", description = "Help" },
+    ]
+  }
+}
+
 resource "terraform_data" "telegram_webhook" {
-  triggers_replace = [sha256(local.telegram_webhook_url)]
+  triggers_replace = [sha256(local.telegram_webhook_url), sha256(jsonencode(local.telegram_commands)), "callback_query-v1"]
 
   provisioner "local-exec" {
-    command = "curl -sS -o /dev/null -w 'setWebhook: HTTP %%{http_code}\\n' https://api.telegram.org/bot$TG_TOKEN/setWebhook -d url=$TG_URL -d secret_token=$TG_SECRET -d 'allowed_updates=[\"message\"]'"
+    command = <<-EOT
+      curl -sS -o /dev/null -w 'setWebhook: HTTP %%{http_code}\n' https://api.telegram.org/bot$TG_TOKEN/setWebhook -d url=$TG_URL -d secret_token=$TG_SECRET -d 'allowed_updates=["message","callback_query"]'
+      curl -sS -o /dev/null -w 'setMyCommands ru: HTTP %%{http_code}\n' https://api.telegram.org/bot$TG_TOKEN/setMyCommands -H 'Content-Type: application/json' -d "$TG_CMDS_RU"
+      curl -sS -o /dev/null -w 'setMyCommands en: HTTP %%{http_code}\n' https://api.telegram.org/bot$TG_TOKEN/setMyCommands -H 'Content-Type: application/json' -d "$TG_CMDS_EN"
+    EOT
     environment = {
-      TG_TOKEN  = var.telegram_bot_token
-      TG_URL    = local.telegram_webhook_url
-      TG_SECRET = local.telegram_webhook_secret
+      TG_TOKEN   = var.telegram_bot_token
+      TG_URL     = local.telegram_webhook_url
+      TG_SECRET  = local.telegram_webhook_secret
+      TG_CMDS_RU = jsonencode({ commands = local.telegram_commands.ru })
+      TG_CMDS_EN = jsonencode({ commands = local.telegram_commands.en, language_code = "en" })
     }
   }
 

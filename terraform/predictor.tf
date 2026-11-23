@@ -96,6 +96,7 @@ resource "aws_lambda_function" "predictor" {
       TELEGRAM_CHAT_ID   = var.telegram_chat_id
       USERS_TABLE        = aws_dynamodb_table.users.name
       ML_FUNCTION        = aws_lambda_function.ml.function_name
+      SITE_URL           = "https://${aws_cloudfront_distribution.site.domain_name}"
     }
   }
 
