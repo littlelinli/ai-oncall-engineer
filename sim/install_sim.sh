@@ -4,6 +4,9 @@
 #
 #   sudo bash install_sim.sh               приложение + посетители + сбор датасета
 #   sudo bash install_sim.sh --no-traffic  без генератора (если посетители идут с другого сервера)
+#   sudo bash install_sim.sh --profile office --bucket <бакет>
+#                                          второй сервер: рабочий сервис для компаний, свои закономерности,
+#                                          датасет в s3://<бакет>/shopsim-office/
 #
 # Настройки генератора можно поменять потом в /etc/shopsim.env и перезапустить:
 #   sudo systemctl restart shopsim-traffic
@@ -15,7 +18,17 @@ DATA_DIR=/var/lib/shopsim
 LOG_DIR=/var/log/demoapp
 RUN_USER=ec2-user
 TRAFFIC=1
-[ "${1:-}" = "--no-traffic" ] && TRAFFIC=0
+PROFILE=shop
+BUCKET=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-traffic) TRAFFIC=0; shift ;;
+    --profile) PROFILE="$2"; shift 2 ;;
+    --bucket) BUCKET="$2"; shift 2 ;;
+    *) echo "Неизвестный параметр: $1" >&2; exit 1 ;;
+  esac
+done
+case "$PROFILE" in shop|office) ;; *) echo "--profile: shop или office" >&2; exit 1 ;; esac
 
 if [ "$(id -u)" -ne 0 ]; then echo "Запустите через sudo" >&2; exit 1; fi
 for f in app.py gunicorn.conf.py traffic.py collector.py; do
@@ -39,6 +52,26 @@ fi
 chmod 600 /etc/demoapp.env
 
 # 4. Настройки симулятора (не перезаписываем, если уже есть)
+if [ ! -f /etc/shopsim.env ] && [ "$PROFILE" = "office" ]; then
+  cat > /etc/shopsim.env <<EOF
+SIM_DATA=/var/lib/shopsim
+SIM_LOG=/var/log/demoapp/app.log
+SIM_TARGET=http://127.0.0.1:8080
+# рабочий сервис для компаний: пик днём в будни, ночной бэкап, рост пользователей
+SIM_PROFILE=office
+# сотрудников в секунду в рабочий пик
+SIM_BASE_SESSIONS=3
+# +4% пользователей в неделю
+SIM_GROWTH_PER_WEEK=0.04
+# проблемы и наплывы реже, чем в магазине; большие наплывы редкость
+SIM_INCIDENT_EVERY_H=5
+SIM_FLASH_EVERY_H=12
+SIM_MEGA_FLASH_P=0.03
+SIM_INCIDENTS=1
+SIM_S3_BUCKET=$BUCKET
+SIM_S3_PREFIX=shopsim-office
+EOF
+fi
 if [ ! -f /etc/shopsim.env ]; then
   cat > /etc/shopsim.env <<'EOF'
 SIM_DATA=/var/lib/shopsim

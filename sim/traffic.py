@@ -13,6 +13,13 @@
 5. Всё, что генератор включил, пишется в events.jsonl (истинная причина),
    а текущее состояние в labels.json: это разметка для обучения модели.
 
+Профили (SIM_PROFILE):
+  shop    интернет-магазин/аукцион: вечерний пик, выходные выше, частые наплывы
+  office  рабочий сервис для компаний (CRM): пик в рабочие часы, обеденный провал,
+          в выходные почти пусто, ночной бэкап грузит CPU (это норма, не проблема),
+          число пользователей растёт каждую неделю, релизы только в рабочее время,
+          наплывы редкие и небольшие (конец месяца, отчёты)
+
 Запуск: python traffic.py  (настройки через переменные окружения, см. CONFIG)
 Для проверки можно ускорить время: SIM_SPEED=60 (час проходит за минуту).
 """
@@ -44,7 +51,12 @@ CONFIG = {
     "data_dir": os.environ.get("SIM_DATA", "/var/lib/shopsim"),
     "token": os.environ.get("DEMO_TOKEN", ""),
     "seed": os.environ.get("SIM_SEED"),
+    "profile": os.environ.get("SIM_PROFILE", "shop").strip().lower(),
+    # рост числа пользователей в неделю (0.05 = +5%), считается от первого запуска
+    "growth_per_week": float(os.environ.get("SIM_GROWTH_PER_WEEK", "0")),
+    "mega_flash_p": float(os.environ.get("SIM_MEGA_FLASH_P", "0.15")),  # доля больших наплывов
 }
+OFFICE = CONFIG["profile"] == "office"
 
 rnd = random.Random(int(CONFIG["seed"])) if CONFIG["seed"] else random.Random()
 SPEED = max(CONFIG["speed"], 1e-6)
@@ -77,8 +89,33 @@ def iso(ts):
 
 # ---------------- ритм нагрузки ----------------
 
+def office_daily(hour):
+    """0..1: ночью почти никого, вход сотрудников в 9, обеденный провал 13–14, к 18 спад."""
+    night = 0.03
+    work = 0.85 / (1 + math.exp(-(hour - 8.8) * 3)) / (1 + math.exp((hour - 18.3) * 2))
+    login_spike = 0.25 * math.exp(-((hour - 9.2) / 0.4) ** 2)
+    lunch_dip = 0.3 * math.exp(-((hour - 13.5) / 0.6) ** 2)
+    evening = 0.08 * math.exp(-((hour - 21) / 1.5) ** 2)
+    return max(0.0, min(1.0, night + work + login_spike - lunch_dip + evening))
+
+
+def office_weekly(dt):
+    wd, h = dt.weekday(), dt.hour
+    if wd == 5:
+        return 0.15
+    if wd == 6:
+        return 0.1
+    if wd == 0 and h < 12:            # понедельник утром все разбирают почту и задачи
+        return 1.2
+    if wd == 4 and h >= 15:           # пятница после обеда
+        return 0.75
+    return 1.0
+
+
 def daily_curve(hour):
     """0..1: ночью ~0.08, утренний подъём, обеденный горб, вечерний пик в 20–21."""
+    if OFFICE:
+        return office_daily(hour)
     night = 0.08
     morning = 0.55 * math.exp(-((hour - 12.5) / 3.2) ** 2)
     evening = 0.95 * math.exp(-((hour - 20.5) / 2.3) ** 2)
@@ -86,6 +123,8 @@ def daily_curve(hour):
 
 
 def weekly_factor(dt):
+    if OFFICE:
+        return office_weekly(dt)
     wd, h = dt.weekday(), dt.hour
     if wd == 4 and h >= 17:          # пятница вечер
         return 1.45
@@ -180,8 +219,34 @@ def think():
     sim_sleep(rnd.uniform(1.0, 6.0))
 
 
+def office_session(rush):
+    """Сотрудник компании: входит, ищет клиентов и сделки, открывает карточки, загружает файлы.
+    rush: конец месяца, все закрывают отчёты."""
+    user = f"emp{rnd.randint(1, 3000)}"
+    hit("GET", "/")
+    think()
+    if rnd.random() < 0.6:
+        hit("POST", "/login", {"user": user, "password": "correct-horse"})
+        think()
+    for _ in range(rnd.randint(2, 6)):
+        if rnd.random() < 0.6:
+            hit("GET", "/search?q=" + rnd.choice(SEARCH_TERMS))
+        else:
+            hit("GET", f"/catalog?page={rnd.randint(0, 30)}")
+        think()
+    for _ in range(rnd.randint(1, 4)):
+        hit("GET", f"/item/{rnd.randint(1, 20000)}")
+        think()
+    if rnd.random() < (0.25 if rush else 0.1):
+        hit("POST", "/upload", {"user": user})
+    if rnd.random() < 0.03:
+        hit("POST", "/checkout", {"user": user}, timeout=12)
+
+
 def session(auction_heavy):
     """Один посетитель. auction_heavy: во время наплыва люди в основном делают ставки."""
+    if OFFICE:
+        return office_session(auction_heavy)
     user = f"u{rnd.randint(1, 50000)}"
     hit("GET", "/")
     think()
@@ -214,7 +279,7 @@ def session(auction_heavy):
 def flash_loop():
     while True:
         sim_sleep(rnd.expovariate(1 / (CONFIG["flash_every_h"] * 3600)))
-        mega = rnd.random() < 0.15
+        mega = rnd.random() < CONFIG["mega_flash_p"]
         peak = rnd.uniform(6, 12) if mega else rnd.uniform(1.8, 4.5)
         ramp_up, plateau, ramp_down = rnd.uniform(120, 300), rnd.uniform(300, 900), rnd.uniform(180, 420)
         fid = f"flash-{int(sim_now())}"
@@ -265,6 +330,14 @@ SCENARIOS = {
     "cpu_hog": 2,
     "app_down": 1,
 }
+if OFFICE:
+    # в рабочем сервисе: чаще утечки, диск и релизы, реже атаки и медленная оплата
+    SCENARIOS = {"payment_slow": 1, "bad_deploy": 3, "memory_leak": 3, "log_storm": 2,
+                 "cleanup_broken": 2, "bot_attack": 1, "cpu_hog": 1, "app_down": 1}
+
+
+def work_hours(dt):
+    return dt.weekday() < 5 and 10 <= dt.hour < 17
 
 
 def plan(name):
@@ -311,6 +384,8 @@ def incident_loop():
     sim_sleep(rnd.uniform(1200, 3600))  # сначала немного спокойной жизни
     while True:
         name = rnd.choices(names, weights)[0]
+        if OFFICE and name == "bad_deploy" and not work_hours(datetime.fromtimestamp(sim_now(), TZ)):
+            continue  # релизы выкатывают только в рабочее время: выбираем другую проблему
         duration, changes, sev = plan(name)
         iid = f"inc-{int(sim_now())}"
         params = {k: v for k, v in changes.items()}
@@ -338,6 +413,57 @@ def incident_loop():
         sim_sleep(rnd.expovariate(1 / (CONFIG["incident_every_h"] * 3600)) + 600)
 
 
+def nightly_job_loop():
+    """office: каждую ночь около 02:00 бэкап и пересчёт отчётов грузят CPU на 35–55% на 20–40 мин.
+    Это обычная жизнь сервера, а не проблема: метка incident остаётся пустой."""
+    while True:
+        now = datetime.fromtimestamp(sim_now(), TZ)
+        start = now.replace(hour=2, minute=rnd.randint(0, 15), second=0, microsecond=0)
+        if start <= now:
+            start += timedelta(days=1)
+        sim_sleep((start - now).total_seconds())
+        with labels_lock:
+            busy = labels["incident"] == "cpu_hog"
+        if busy:
+            continue
+        pct, dur = rnd.randint(35, 55), rnd.uniform(1200, 2400)
+        write_event("scheduled_job", "start", name="nightly_backup", cpu_pct=pct, duration_s=int(dur))
+        try:
+            set_state({"cpu_hog_pct": pct})
+            sim_sleep(dur)
+        finally:
+            with labels_lock:
+                busy = labels["incident"] == "cpu_hog"
+            if not busy:
+                set_state({"cpu_hog_pct": 0})
+            write_event("scheduled_job", "end", name="nightly_backup")
+
+
+_growth_start = None
+
+
+def growth_factor():
+    """Пользователей становится больше: (1 + рост) ^ (недель с первого запуска).
+    Момент первого запуска хранится в файле, чтобы рост не сбрасывался после перезапуска."""
+    global _growth_start
+    g = CONFIG["growth_per_week"]
+    if not g:
+        return 1.0
+    if _growth_start is None:
+        path = os.path.join(CONFIG["data_dir"], "start_ts")
+        try:
+            _growth_start = float(open(path).read())
+        except Exception:
+            _growth_start = sim_now()
+            try:
+                with open(path, "w") as f:
+                    f.write(str(_growth_start))
+            except Exception:
+                pass
+    weeks = max(0.0, (sim_now() - _growth_start) / (7 * 86400))
+    return (1 + g) ** weeks
+
+
 # ---------------- главный цикл ----------------
 
 def poisson(lam):
@@ -357,6 +483,8 @@ def main():
     os.makedirs(CONFIG["data_dir"], exist_ok=True)
     print("traffic config:", json.dumps({k: v for k, v in CONFIG.items() if k != "token"}), flush=True)
     threading.Thread(target=flash_loop, daemon=True).start()
+    if OFFICE and CONFIG["token"]:
+        threading.Thread(target=nightly_job_loop, daemon=True).start()
     if CONFIG["incidents"]:
         if not CONFIG["token"]:
             print("DEMO_TOKEN is empty: incidents disabled", flush=True)
@@ -381,7 +509,8 @@ def main():
         hour = dt.hour + dt.minute / 60
         with labels_lock:
             flash = labels["flash_multiplier"]
-        lam = CONFIG["base_sessions"] * daily_curve(hour) * weekly_factor(dt) * noise.step() * flash
+        lam = (CONFIG["base_sessions"] * daily_curve(hour) * weekly_factor(dt) * noise.step() * flash
+               * growth_factor())
         # шаг 1 секунда реального времени = SPEED секунд симуляции
         for _ in range(poisson(lam * min(SPEED, 1.0))):
             with active_lock:
