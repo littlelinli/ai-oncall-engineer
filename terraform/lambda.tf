@@ -85,7 +85,7 @@ data "aws_iam_policy_document" "incident_analyzer" {
   statement {
     sid       = "EmailAlerts"
     actions   = ["sns:Publish"]
-    resources = [aws_sns_topic.incident_alerts.arn]
+    resources = [aws_sns_topic.incident_alerts.arn, aws_sns_topic.user_alerts.arn]
   }
 }
 
@@ -136,8 +136,9 @@ resource "aws_lambda_function" "incident_analyzer" {
       AUTO_FIX           = var.auto_fix ? "true" : "false"
       PREDICTIONS_TABLE  = "kezekshi-predictions"
       DEMO_SERVER_ID     = var.demo_server_id
-      SERVERS_TABLE      = aws_dynamodb_table.servers.name
-      USERS_TABLE        = aws_dynamodb_table.users.name
+      SERVERS_TABLE         = aws_dynamodb_table.servers.name
+      USERS_TABLE           = aws_dynamodb_table.users.name
+      USER_ALERTS_TOPIC_ARN = aws_sns_topic.user_alerts.arn
     }
   }
 

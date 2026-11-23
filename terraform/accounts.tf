@@ -82,6 +82,15 @@ resource "aws_cognito_user_pool_client" "site" {
   }
 }
 
+# ---------- почта пользователям ----------
+# Одна тема на всех: каждый пользователь подписан своей почтой с фильтром {"owner": [его sub]},
+# анализатор публикует с атрибутом owner, и письмо получает только владелец сервера.
+# Подписку создаёт kezekshi-account (PATCH /me {"email_alerts": true}), AWS просит подтвердить её письмом.
+
+resource "aws_sns_topic" "user_alerts" {
+  name = "kezekshi-user-alerts"
+}
+
 # ---------- пользователи: язык, Telegram, одноразовые ссылки привязки ----------
 
 resource "aws_dynamodb_table" "users" {
@@ -156,6 +165,17 @@ data "aws_iam_policy_document" "account" {
     resources = ["*"]
   }
   statement {
+    sid       = "EmailAlerts"
+    actions   = ["sns:Subscribe"]
+    resources = [aws_sns_topic.user_alerts.arn]
+  }
+  # Unsubscribe and GetSubscriptionAttributes act on a subscription ARN, unknown in advance
+  statement {
+    sid       = "EmailAlertsManage"
+    actions   = ["sns:Unsubscribe", "sns:GetSubscriptionAttributes"]
+    resources = ["*"]
+  }
+  statement {
     sid       = "RemoveServerAlarms"
     actions   = ["cloudwatch:DeleteAlarms"]
     resources = ["arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${var.alarm_prefix}srv-*"]
@@ -190,8 +210,9 @@ resource "aws_lambda_function" "account" {
       INCIDENTS_TABLE    = aws_dynamodb_table.incidents.name
       PREDICTIONS_TABLE  = aws_dynamodb_table.predictions.name
       METRICS_NAMESPACE  = var.servers_metrics_namespace
-      ALARM_PREFIX       = var.alarm_prefix
-      TELEGRAM_BOT_TOKEN = var.telegram_bot_token
+      ALARM_PREFIX          = var.alarm_prefix
+      TELEGRAM_BOT_TOKEN    = var.telegram_bot_token
+      USER_ALERTS_TOPIC_ARN = aws_sns_topic.user_alerts.arn
     }
   }
 

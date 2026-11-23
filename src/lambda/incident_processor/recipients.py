@@ -41,16 +41,26 @@ def owner_of(server_id):
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
+def owner_profile(server_id):
+    """(owner, запись пользователя) или (None, {})."""
+    owner = owner_of(server_id)
+    if owner and os.environ.get("USERS_TABLE"):
+        return owner, _ddb.Table(os.environ["USERS_TABLE"]).get_item(Key={"user_id": owner}).get("Item") or {}
+    return owner, {}
+
+
+def langs_of(user, default_langs):
+    return _langs((user or {}).get("lang"), default_langs)
+
+
 def telegram_targets(server_id, default_langs):
     """[(chat_id, [языки])] без повторов."""
     out = []
     owner = None
     try:
-        owner = owner_of(server_id)
-        if owner and os.environ.get("USERS_TABLE"):
-            user = _ddb.Table(os.environ["USERS_TABLE"]).get_item(Key={"user_id": owner}).get("Item") or {}
-            if user.get("telegram_chat_id"):
-                out.append((int(user["telegram_chat_id"]), _langs(user.get("lang"), default_langs)))
+        owner, user = owner_profile(server_id)
+        if user.get("telegram_chat_id"):
+            out.append((int(user["telegram_chat_id"]), _langs(user.get("lang"), default_langs)))
     except Exception as e:  # без владельца всё равно уведомим команду
         print(f"recipients: {e!r}")
     team = os.environ.get("TELEGRAM_CHAT_ID")
