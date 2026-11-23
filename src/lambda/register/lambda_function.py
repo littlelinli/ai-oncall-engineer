@@ -1,4 +1,6 @@
 """POST /register: регистрирует новый сервер и возвращает команду установки агента.
+Требует вход (JWT от Amazon Cognito проверяет API Gateway): сервер привязывается
+к пользователю (owner = claim "sub"), и его инциденты видит и получает только он.
 
 Запрос (тело необязательно):  {"name": "shop-api-prod"}
 Ответ 200: {"server_id", "name", "key", "ingest_url", "install_url", "command"}
@@ -45,7 +47,18 @@ def read_body(event):
     return data
 
 
+def owner_claims(event):
+    try:
+        c = event["requestContext"]["authorizer"]["jwt"]["claims"]
+        return c["sub"], c.get("email", "")
+    except (KeyError, TypeError):
+        return None, None
+
+
 def lambda_handler(event, context):
+    owner, email = owner_claims(event)
+    if not owner:
+        return response(401, {"error": "Войдите в аккаунт, чтобы подключить сервер"})
     try:
         data = read_body(event)
     except (ValueError, UnicodeDecodeError):
@@ -63,6 +76,9 @@ def lambda_handler(event, context):
             "server_id": server_id,
             "name": name,
             "status": "pending",
+            "owner": owner,
+            "owner_email": email,
+            "cloud": str(data.get("cloud") or "aws")[:20],
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "ttl": int(time.time()) + PENDING_TTL,
         },

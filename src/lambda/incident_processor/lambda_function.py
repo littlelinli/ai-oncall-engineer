@@ -21,6 +21,7 @@ from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
 import explain
+import recipients
 
 LOG_GROUP = "/demoapp/app"
 SERVICE = "demoapp"
@@ -479,14 +480,13 @@ def message_text(inc, lang="ru", icons=True):
     return "\n".join(parts)
 
 
-def all_languages(inc, icons=True):
-    """Сообщение на всех языках из MESSAGE_LANGS, блоки через разделитель."""
-    return "\n\n— — —\n\n".join(message_text(inc, lang, icons) for lang in LANGS)
+def all_languages(inc, icons=True, langs=None):
+    """Сообщение на языках langs (по умолчанию MESSAGE_LANGS), блоки через разделитель."""
+    return "\n\n— — —\n\n".join(message_text(inc, lang, icons) for lang in (langs or LANGS))
 
 
-def telegram(text):
+def telegram(text, chat_id):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         print("Telegram не настроен, пропускаю")
         return
@@ -500,13 +500,21 @@ def telegram(text):
 
 
 def send_telegram(inc):
-    telegram(all_languages(inc))
+    """Владельцу сервера на его языке и/или в чат команды (см. recipients.py)."""
+    for chat_id, langs in recipients.telegram_targets(inc.get("server_id"), LANGS):
+        try:
+            telegram(all_languages(inc, langs=langs), chat_id)
+        except Exception as e:
+            print(f"telegram {chat_id}: {e}")
 
 
 def send_sns(inc):
+    """Почта команды (SNS): только для серверов без владельца, как и общий чат."""
     topic_arn = os.environ.get("SNS_TOPIC_ARN")
     if not topic_arn:
         print("SNS_TOPIC_ARN не задан, пропускаю")
+        return
+    if recipients.owner_of(inc.get("server_id")) and os.environ.get("NOTIFY_TEAM_ALL", "false").lower() != "true":
         return
     boto3.client("sns").publish(
         TopicArn=topic_arn,
@@ -536,13 +544,17 @@ def attach_to_open(open_inc, incident):
             UpdateExpression=expr, ExpressionAttributeValues=values)
     if worse:
         icon = {"high": "🟠", "critical": "🔴"}.get(incident["severity"], "🟡")
-        blocks = []
-        for lang in LANGS:
-            t = L[lang]
-            blocks.append(f"{icon} {t['worse'].format(server=incident['server'])}: {tr(incident, 'title', lang)}\n"
-                          f"{tr(incident, 'root_cause', lang)}\n"
-                          + t["cont"].format(title=tr(open_inc, "title", lang)))
-        telegram("\n\n— — —\n\n".join(blocks))
+        for chat_id, langs in recipients.telegram_targets(incident.get("server_id"), LANGS):
+            blocks = []
+            for lang in langs:
+                t = L[lang]
+                blocks.append(f"{icon} {t['worse'].format(server=incident['server'])}: {tr(incident, 'title', lang)}\n"
+                              f"{tr(incident, 'root_cause', lang)}\n"
+                              + t["cont"].format(title=tr(open_inc, "title", lang)))
+            try:
+                telegram("\n\n— — —\n\n".join(blocks), chat_id)
+            except Exception as e:
+                print(f"telegram {chat_id}: {e}")
     print(json.dumps({"status": "grouped", "into": open_inc["incident_id"],
                       "alarm": incident["alarm_name"], "escalated": worse}, ensure_ascii=False))
     return {"status": "grouped", "id": open_inc["incident_id"], "escalated": worse}

@@ -70,8 +70,18 @@ output "servers_table_name" {
 }
 
 output "site_url" {
-  description = "Kezekshi website"
-  value       = "http://${aws_s3_bucket_website_configuration.site.website_endpoint}"
+  description = "Kezekshi website (HTTPS)"
+  value       = "https://${aws_cloudfront_distribution.site.domain_name}"
+}
+
+output "account_api_url" {
+  description = "Account API (/me/*), needs a Cognito JWT"
+  value       = local.account_api_url
+}
+
+output "cognito_client_id" {
+  description = "Cognito app client of the website"
+  value       = aws_cognito_user_pool_client.site.id
 }
 
 output "api_url" {

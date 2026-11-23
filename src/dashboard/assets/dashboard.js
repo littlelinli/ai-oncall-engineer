@@ -1,6 +1,8 @@
 (function () {
   const cfg = window.APP_CONFIG || {};
-  const state = { incidents: [], filter: "all", selectedId: null };
+  const A = window.KZ_AUTH;
+  const LOGGED_IN = Boolean(A && A.loggedIn());
+  const state = { incidents: [], servers: [], filter: "all", selectedId: null };
 
   const SEVERITY = { critical: "Критичный", high: "Высокий", medium: "Средний", low: "Низкий" };
   const STATUS = { open: "Открыт", resolved: "Решён" };
@@ -79,7 +81,25 @@
     return i;
   }
 
+  function setPill(text, live) {
+    const pill = $("source-pill");
+    pill.textContent = text;
+    pill.classList.toggle("is-live", Boolean(live));
+  }
+
   async function loadIncidents() {
+    if (LOGGED_IN) {
+      try {
+        const data = await A.call("/me/incidents");
+        state.incidents = (Array.isArray(data) ? data : []).map(normalize);
+        $("page-sub").textContent = "Инциденты ваших серверов";
+        setPill("Данные из AWS", true);
+      } catch (e) {
+        toast("Не удалось загрузить инциденты: " + e.message);
+      }
+      return;
+    }
+    $("demo-note").hidden = false;
     if (!cfg.API_URL) {
       state.incidents = (window.MOCK_INCIDENTS || []).map(normalize);
       return;
@@ -89,15 +109,119 @@
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
       state.incidents = (Array.isArray(data) ? data : data.items || []).map(normalize);
-      const withRegion = state.incidents.find((x) => x.region);
-      if (withRegion) $("page-sub").textContent = `Сервис ${withRegion.service || "demo-app"}, регион ${withRegion.region}`;
-      const pill = $("source-pill");
-      pill.textContent = "Данные из AWS";
-      pill.classList.add("is-live");
+      $("page-sub").textContent = "Витрина: демо-сервер, регион eu-north-1";
+      setPill("Демо-сервер, данные из AWS", true);
     } catch (e) {
       state.incidents = (window.MOCK_INCIDENTS || []).map(normalize);
-      toast("Не удалось загрузить данные из API, показаны тестовые. Проверьте API_URL и CORS.");
+      toast("Не удалось загрузить данные из API, показаны тестовые.");
     }
+  }
+
+  // ---------- личный кабинет: серверы, Telegram, язык ----------
+
+  const SERVER_STATUS = { online: "На связи", pending: "Ждём агента", offline: "Нет связи" };
+
+  function serverStatus(s) {
+    if (s.status === "online" && s.last_seen && Date.now() - new Date(s.last_seen) > 5 * 60000) return "offline";
+    return s.status || "pending";
+  }
+
+  async function loadServers() {
+    if (!LOGGED_IN) return;
+    try {
+      state.servers = await A.call("/me/servers");
+    } catch (e) {
+      toast("Не удалось загрузить серверы: " + e.message);
+    }
+  }
+
+  function renderServers() {
+    if (!LOGGED_IN) return;
+    $("servers-panel").hidden = false;
+    const ul = $("server-list");
+    if (!state.servers.length) {
+      ul.innerHTML = `<li class="detail-empty">Серверов пока нет. <a href="connect.html">Подключите первый</a>, это 2 минуты.</li>`;
+      return;
+    }
+    const m = (fc, key, label, unit) => {
+      const v = fc && fc[key];
+      if (!v) return `<div class="server-metric"><b>—</b><span>${label}</span></div>`;
+      return `<div class="server-metric"><b>${Math.round(v.now)}${unit}</b><span>${label}</span>
+        <em>через 30 мин ≈ ${Math.round(v.f30)}${unit}</em></div>`;
+    };
+    ul.innerHTML = state.servers.map((s) => {
+      const st = serverStatus(s);
+      const p = s.prediction || {};
+      const fc = p.forecast || {};
+      const risks = (p.risks || []).map((r) => `<div class="server-risk">🔮 ${esc(r.text)}</div>`).join("");
+      return `<li class="server-item">
+        <div class="server-top">
+          <span class="server-name">${esc(s.name)}<small>${esc(s.server_id)}</small></span>
+          <span>
+            <span class="status status-${st}">${SERVER_STATUS[st] || st}</span>
+            <button class="btn btn-ghost btn-small" type="button" data-remove="${esc(s.server_id)}" data-name="${esc(s.name)}">Отключить</button>
+          </span>
+        </div>
+        <div class="server-metrics">
+          ${m(fc, "cpu", "CPU", "%")}${m(fc, "mem", "Память", "%")}${m(fc, "disk", "Диск", "%")}${m(fc, "errors", "Ошибок/мин", "")}
+        </div>
+        ${risks}
+      </li>`;
+    }).join("");
+  }
+
+  async function loadProfile() {
+    if (!LOGGED_IN) return;
+    try {
+      const me = await A.call("/me");
+      $("lang-select").value = me.lang || "both";
+      const btn = $("tg-btn");
+      btn.dataset.linked = me.telegram_linked ? "1" : "";
+      btn.textContent = me.telegram_linked ? "Отключить Telegram" : "Подключить Telegram";
+    } catch (e) {
+      toast("Не удалось загрузить профиль: " + e.message);
+    }
+  }
+
+  if (LOGGED_IN) {
+    $("tg-btn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      try {
+        if (btn.dataset.linked) {
+          if (!confirm("Отключить уведомления в Telegram?")) return;
+          await A.call("/me/telegram", { method: "DELETE" });
+          toast("Telegram отключён");
+          return loadProfile();
+        }
+        const r = await A.call("/me/telegram", { method: "POST" });
+        window.open(r.url, "_blank", "noopener");
+        toast("Нажмите «Start» в Telegram. Ссылка действует 15 минут.");
+        setTimeout(loadProfile, 20000);
+      } catch (err) {
+        toast("Telegram: " + err.message);
+      }
+    });
+    $("lang-select").addEventListener("change", async (e) => {
+      try {
+        await A.call("/me", { method: "PATCH", body: JSON.stringify({ lang: e.target.value }) });
+        toast("Язык уведомлений сохранён");
+      } catch (err) {
+        toast("Не удалось сохранить: " + err.message);
+      }
+    });
+    $("server-list").addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-remove]");
+      if (!b) return;
+      if (!confirm(`Отключить сервер ${b.dataset.name}? Его алармы удалятся. Агент на самом сервере удалите командой: sudo systemctl disable --now kezekshi-agent`)) return;
+      try {
+        await A.call("/me/servers/" + encodeURIComponent(b.dataset.remove), { method: "DELETE" });
+        toast("Сервер отключён");
+        await loadServers();
+        renderServers();
+      } catch (err) {
+        toast("Не удалось отключить: " + err.message);
+      }
+    });
   }
 
   function sorted() {
@@ -154,7 +278,13 @@
     svg.innerHTML = out;
   }
 
-  const ALARM_LABEL = { cpu: "Высокая загрузка CPU", disk: "Диск заполняется", error: "Ошибки приложения", health: "Сервис не отвечает", status: "Проверка статуса EC2" };
+  // порядок важен: берётся первое совпадение в имени аларма
+  const ALARM_LABEL = {
+    "server-down": "Сервер не на связи", "app-down": "Приложение не отвечает", "mem": "Заканчивается память",
+    "slow": "Медленные ответы", "auth": "Атака на вход", "log-flood": "Шквал логов",
+    cpu: "Высокая загрузка CPU", disk: "Диск заполняется", error: "Ошибки приложения",
+    health: "Сервис не отвечает", status: "Проверка статуса EC2"
+  };
   function alarmLabel(name) {
     const n = String(name || "").toLowerCase();
     const key = Object.keys(ALARM_LABEL).find((k) => n.includes(k));
@@ -250,9 +380,11 @@
         <p>${esc(i.summary)}</p>
       </div>
       <div class="detail-section">
-        <h3>Вероятная причина по мнению AI${i.ai_model ? " (" + esc(i.ai_model) + ")" : ""}</h3>
+        <h3>Вероятная причина${i.cause_source === "ml" ? " (ML-модель)" : ""}</h3>
         <p class="ai-cause">${esc(i.root_cause)}</p>
       </div>
+      ${i.forecast_warning ? `<div class="detail-section"><h3>Прогноз</h3>
+        <p>🔮 ML-агент предупреждал об этой проблеме за ${esc(i.forecast_warning.minutes_before)} мин до аларма.</p></div>` : ""}
       <div class="detail-section">
         <h3>Что делать</h3>
         <ol class="reco">${(i.recommendations || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ol>
@@ -295,6 +427,7 @@
   }
 
   function renderAll() {
+    renderServers();
     renderStats();
     renderChart();
     renderAlarms();
@@ -316,13 +449,13 @@
   });
 
   (async function init() {
-    await loadIncidents();
+    await Promise.all([loadIncidents(), loadServers(), loadProfile()]);
     const fromHash = location.hash.slice(1);
     const first = sorted()[0];
     state.selectedId = state.incidents.some((i) => i.incident_id === fromHash) ? fromHash : first && first.incident_id;
     renderAll();
-    if (cfg.API_URL && cfg.REFRESH_SECONDS > 0) {
-      setInterval(async () => { await loadIncidents(); renderAll(); }, cfg.REFRESH_SECONDS * 1000);
+    if ((cfg.API_URL || LOGGED_IN) && cfg.REFRESH_SECONDS > 0) {
+      setInterval(async () => { await Promise.all([loadIncidents(), loadServers()]); renderAll(); }, cfg.REFRESH_SECONDS * 1000);
     }
   })();
 })();
