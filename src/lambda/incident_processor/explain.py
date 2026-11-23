@@ -75,6 +75,9 @@ KEYWORDS = (
     (("payment", "gateway", "upstream", "provider"), "upstream_slow",
      T("внешний сервис (например, платёжный) отвечает слишком медленно или с ошибками",
        "an external service (for example, the payment provider) is slow or returns errors")),
+    (("crashed", "workers died", "worker timeout", "restarting", "segmentation fault"), "app_crash",
+     T("процессы приложения упали, и оно отвечает ошибкой на все запросы",
+       "the application processes have crashed and it answers every request with an error")),
     (("connection refused", "could not connect", "connection reset", "unavailable"), "dependency_down",
      T("приложение не может подключиться к зависимому сервису (база данных, поиск, кэш или внешний API)",
        "the application cannot connect to a service it depends on (database, search, cache or external API)")),
@@ -284,7 +287,15 @@ def explain(alarm_name, value, threshold, series, log_summary, now_ts):
         r["severity"] = "critical" if value >= 100 else "high" if value >= 30 else "medium"
         where = T(f" Больше всего ошибок на {top_path}.", f" Most errors are on {top_path}.") \
             if top_path and top_share >= 0.6 else T("", "")
-        if log_code:
+        health_now = last(s.get("health"))
+        if log_code == "app_crash" or (health_now is not None and health_now < 0.5):
+            r["cause_code"] = "app_down"
+            r["severity"] = "critical"
+            r["root_cause"] = T("Приложение упало: ошибкой отвечает всё, включая проверку здоровья. "
+                                "Сервер при этом работает, проблема в самом приложении.",
+                                "The application is down: everything, including the health check, returns an error. "
+                                "The server itself is up, the problem is the application.")
+        elif log_code:
             r["cause_code"] = log_code
             r["root_cause"] = T(f"Судя по логам, {log_expl['ru']}.{where['ru']}",
                                 f"According to the logs, {log_expl['en']}.{where['en']}")
@@ -309,6 +320,10 @@ def explain(alarm_name, value, threshold, series, log_summary, now_ts):
                                 "Check the status of the external service (payment gateway)"),
                               T("Уменьшить таймауты и показать пользователю понятную ошибку",
                                 "Lower the timeouts and show users a clear error message")],
+            "app_down": [T("Посмотреть, почему упал процесс: journalctl -u <сервис> -n 100",
+                           "See why the process died: journalctl -u <service> -n 100"),
+                         T("Если после перезапуска падает снова, откатить последний деплой",
+                           "If it crashes again after a restart, roll back the last deploy")],
             "dependency_down": [T("Проверить, запущена ли база данных или зависимый сервис",
                                   "Check that the database or the dependent service is running"),
                                 T("Проверить сеть и доступы до него", "Check the network and access to it")],
