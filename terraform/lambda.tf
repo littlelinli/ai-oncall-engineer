@@ -67,7 +67,7 @@ data "aws_iam_policy_document" "incident_analyzer" {
   statement {
     sid       = "MlCause"
     actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.ml.arn]
+    resources = [aws_lambda_function.ml.arn, aws_lambda_function.llm.arn]
   }
 
   # Who gets the message: owner of the server and his Telegram chat (recipients.py)
@@ -147,6 +147,7 @@ resource "aws_lambda_function" "incident_analyzer" {
       USERS_TABLE           = aws_dynamodb_table.users.name
       USER_ALERTS_TOPIC_ARN = aws_sns_topic.user_alerts.arn
       ML_FUNCTION           = aws_lambda_function.ml.function_name
+      LLM_FUNCTION          = aws_lambda_function.llm.function_name
     }
   }
 

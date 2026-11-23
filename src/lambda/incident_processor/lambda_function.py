@@ -362,6 +362,37 @@ def forecast_warning(server_id, alarm_type, alarm_time, max_hours=1):
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
+def rewrite_with_llm(incident, analysis):
+    """Своя языковая модель (Lambda kezekshi-llm) переписывает «Вероятную причину» живым языком.
+    Шаблонный текст остаётся запасным: модель не ответила, ответила долго или текст не прошёл проверку."""
+    fn = os.environ.get("LLM_FUNCTION")
+    if not fn:
+        return None
+    from botocore.config import Config
+    facts = {
+        "server": incident.get("server"),
+        "alarm": analysis.get("alarm_type"),
+        "title": incident.get("title"),
+        "value": incident.get("value"),
+        "threshold": incident.get("threshold"),
+        "metrics_now": incident.get("stats"),
+        "requests_vs_usual": analysis.get("load_ratio"),
+        "cause_code": analysis.get("cause_code"),
+        "log_messages": [x.get("msg") for x in (incident.get("log_summary") or [])[:3] if x.get("msg")],
+    }
+    payload = {"facts": facts, "langs": LANGS,
+               "draft": {"ru": incident.get("root_cause", ""), "en": incident.get("root_cause_en", "")}}
+    try:
+        client = boto3.client("lambda", config=Config(read_timeout=110, connect_timeout=5, retries={"max_attempts": 0}))
+        resp = client.invoke(FunctionName=fn, Payload=json.dumps(payload, ensure_ascii=False, default=str).encode())
+        out = json.loads(resp["Payload"].read())
+    except Exception as e:
+        print(f"llm: {e!r}")
+        return None
+    print(json.dumps({"llm": {k: out.get(k) for k in ("model", "seconds", "rejected")}}, ensure_ascii=False))
+    return out if out.get("available") else None
+
+
 # ---------- Автопочинка (SSM Run Command) ----------
  
 def fix_plan(alarm_name):
@@ -684,6 +715,17 @@ def lambda_handler(event, context):
     open_inc = open_incident_for(server_key, event["time"])
     if open_inc and open_inc.get("incident_id") != inc_id:
         return attach_to_open(open_inc, incident)
+
+    # Своя языковая модель пишет причину живым языком; шаблон остаётся запасным
+    llm = rewrite_with_llm(incident, analysis)
+    texts = (llm or {}).get("texts") or {}
+    if texts:
+        incident["root_cause_template"] = {"ru": incident.get("root_cause"), "en": incident.get("root_cause_en")}
+        if texts.get("ru"):
+            incident["root_cause"] = texts["ru"]
+        if texts.get("en"):
+            incident["root_cause_en"] = texts["en"]
+    incident["text_source"] = f"llm:{llm.get('model')}" if texts else "template"
 
     incident["forecast_warning"] = forecast_warning(server_id, analysis["alarm_type"], event["time"])
     incident["history"] = similar_history(server_key, analysis["alarm_type"], event["time"])
