@@ -2,7 +2,8 @@
 # Пишет «Вероятную причину» инцидента живым языком; без неё анализатор шлёт шаблонный текст.
 # Код: src/llm. Образ собирается при apply, когда меняется src/llm (нужен Docker, есть в CloudShell).
 # Файл модели (~1,1 ГБ) один раз копируется с Hugging Face в закрытый бакет датасета, оттуда его
-# берёт Lambda. Дообученную модель кладём под другим ключом и меняем var.llm_model_key.
+# берёт Lambda. Дообученную модель (ml/llm/finetune_qlora.ipynb) загружаем в S3 сами под другим
+# ключом и меняем var.llm_model_key: файл уже есть, поэтому с Hugging Face ничего не качается.
 
 variable "llm_model_url" {
   description = "Where to download the GGUF model once (Hugging Face)"
@@ -138,7 +139,7 @@ resource "aws_lambda_function" "llm" {
     variables = {
       MODEL_BUCKET = aws_s3_bucket.dataset.bucket
       MODEL_KEY    = var.llm_model_key
-      MODEL_NAME   = "qwen2.5-1.5b-instruct-q4"
+      MODEL_NAME   = trimsuffix(basename(var.llm_model_key), ".gguf")
     }
   }
 
